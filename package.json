@@ -1,0 +1,23 @@
+{
+  "name": "camera-client",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Multi-camera WebSocket client with WebGL debayering",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.21",
+    "pinia": "^2.1.7",
+    "js-yaml": "^4.1.0",
+    "events": "^3.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.0",
+    "vite-plugin-glsl": "^1.3.0"
+  }
+}

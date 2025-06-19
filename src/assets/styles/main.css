@@ -1,0 +1,131 @@
+/* src/assets/styles/main.css */
+
+/* CSS Reset and Base Styles */
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #2a2a2a;
+  --border-color: #333;
+  --border-hover: #555;
+  --text-primary: #ddd;
+  --text-secondary: #888;
+  --accent-blue: #4a9eff;
+  --accent-green: #10b981;
+  --accent-red: #dc2626;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
+
+/* Button Reset */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Input/Select Reset */
+input, select {
+  font-family: inherit;
+  outline: none;
+}
+
+/* Prevent text selection on UI elements */
+.app {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Allow text selection in specific areas */
+.server-address,
+.error-message p {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Transitions */
+* {
+  transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Utility Classes */
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Loading Animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Focus Styles */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+/* Tooltip styles (if needed) */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  margin-bottom: 4px;
+  box-shadow: var(--shadow-md);
+  z-index: 1000;
+}
+
+/* Responsive utilities */
+@media (max-width: 768px) {
+  .control-panel {
+    width: 280px !important;
+  }
+  
+  .camera-list {
+    grid-template-columns: 1fr !important;
+  }
+}
