@@ -20,6 +20,7 @@ export const useCameraStore = defineStore('camera', {
     // System state
     camerasConfigured: false,
     camerasRunning: false,
+    saveModeConfigured: false,
     
     // UI state
     debayerQuality: 'quality', // 'fast', 'quality', 'high'
@@ -174,6 +175,12 @@ export const useCameraStore = defineStore('camera', {
         const cameraConfig = this.config.camera_config
         this.serverManager.configureAll(cameraConfig)
         
+        // Set save mode as part of configuration (only if not already set)
+        if (!this.saveModeConfigured) {
+          await this.setSaveMode()
+          this.saveModeConfigured = true
+        }
+        
         // Wait a bit for configuration to complete
         await new Promise(resolve => setTimeout(resolve, 1000))
         
@@ -208,9 +215,6 @@ export const useCameraStore = defineStore('camera', {
       if (!this.canStartCameras) return false
       
       try {
-        // Set save mode first
-        await this.setSaveMode()
-        
         // Start cameras
         this.serverManager.startAllCameras()
         
@@ -242,6 +246,7 @@ export const useCameraStore = defineStore('camera', {
         
         this.camerasRunning = false
         this.camerasConfigured = false
+        this.saveModeConfigured = false
         return true
       } catch (error) {
         this.lastError = 'Failed to stop cameras'
