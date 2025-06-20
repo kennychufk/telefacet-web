@@ -128,9 +128,7 @@
             @change="store.setDebayerQuality($event.target.value)"
             class="quality-select"
           >
-            <option value="fast">Fast</option>
             <option value="quality">Quality</option>
-            <option value="high">High Quality</option>
           </select>
         </div>
         

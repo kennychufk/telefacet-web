@@ -31,7 +31,7 @@ npm run preview
 - **MultiServerManager**: Coordinates multiple WebSocket servers and provides global camera ID mapping
 - **ConfigLoader.js**: Parses and validates YAML configuration files with server addresses, camera settings, and AWB gains
 - **cameraStore.js**: Pinia store managing application state, server connections, and camera lifecycle
-- **Debayer.js**: WebGL-based Bayer demosaicing with three quality levels (fast, quality, high)
+- **Debayer.js**: WebGL-based Bayer demosaicing
 
 ### Data Flow
 
@@ -64,9 +64,7 @@ YAML files define:
 
 ### WebGL Debayering
 
-Three quality modes available:
-- **Fast**: Nearest neighbor interpolation
+One quality mode available for now (will be extended in the future):
 - **Quality**: Bilinear interpolation
-- **High**: Malvar-He-Cutler algorithm with 5x5 neighborhood
 
 The debayer handles 10-bit SRGGB10P packed format where 4 pixels are packed into 5 bytes.

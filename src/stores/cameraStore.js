@@ -23,7 +23,7 @@ export const useCameraStore = defineStore('camera', {
     saveModeConfigured: false,
     
     // UI state
-    debayerQuality: 'quality', // 'fast', 'quality', 'high'
+    debayerQuality: 'quality', // 'quality'
     showControlPanel: true,
     
     // Error handling

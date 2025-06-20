@@ -25,7 +25,7 @@ function handleKeyPress(event) {
   
   // Toggle debayer quality with 'Q' key
   if (event.key === 'q' || event.key === 'Q') {
-    const qualities = ['fast', 'quality', 'high']
+    const qualities = ['quality']
     const currentIndex = qualities.indexOf(store.debayerQuality)
     const nextIndex = (currentIndex + 1) % qualities.length
     store.setDebayerQuality(qualities[nextIndex])
