@@ -1,6 +1,6 @@
-// src/webgl/Debayer.js - Fixed version with proper 10-bit unpacking and RGGB pattern
+// src/webgl/Debayer.js - Fixed version with proper 10-bit unpacking, RGGB pattern, and 180° rotation
 
-// Vertex shader - shared by all quality levels
+// Vertex shader - shared by all quality levels - Modified for 180° rotation
 export const vertexShaderSource = `
 attribute vec2 a_position;
 attribute vec2 a_texCoord;
@@ -8,7 +8,9 @@ varying vec2 v_texCoord;
 
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
-    v_texCoord = a_texCoord;
+    // Rotate 180 degrees by inverting both texture coordinates
+    // This is equivalent to: 1.0 - texCoord for both x and y
+    v_texCoord = vec2(1.0 - a_texCoord.x, 1.0 - a_texCoord.y);
 }
 `
 
