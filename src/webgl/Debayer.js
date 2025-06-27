@@ -1,4 +1,4 @@
-// src/webgl/Debayer.js
+// src/webgl/Debayer.js - Fixed version with proper 10-bit unpacking and RGGB pattern
 
 // Vertex shader - shared by all quality levels
 export const vertexShaderSource = `
@@ -12,7 +12,7 @@ void main() {
 }
 `
 
-// Fragment shader for quality (bilinear) debayering
+// Fragment shader for quality (bilinear) debayering with fixed unpacking - RGGB pattern
 export const fragmentShaderQuality = `
 precision highp float;
 precision highp int;
@@ -31,39 +31,46 @@ float unpack10bit(vec2 imageCoord) {
         return 0.0;
     }
     
+    // Calculate which group of 4 pixels this pixel belongs to
     float groupIdx = floor(x / 4.0);
     int pixelInGroup = int(mod(x, 4.0));
     
-    float lineOffset = y * u_bytesPerLine;
-    float groupOffset = groupIdx * 5.0;
+    // Calculate byte positions in linear array
+    float rowStart = y * u_bytesPerLine;
+    float groupStart = groupIdx * 5.0;
     
-    float b0Pos = lineOffset + groupOffset + 0.0;
-    float b1Pos = lineOffset + groupOffset + 1.0;
-    float b2Pos = lineOffset + groupOffset + 2.0;
-    float b3Pos = lineOffset + groupOffset + 3.0;
-    float b4Pos = lineOffset + groupOffset + 4.0;
+    // Calculate the 5 byte positions for this group
+    float bytePos[5];
+    bytePos[0] = rowStart + groupStart;
+    bytePos[1] = rowStart + groupStart + 1.0;
+    bytePos[2] = rowStart + groupStart + 2.0;
+    bytePos[3] = rowStart + groupStart + 3.0;
+    bytePos[4] = rowStart + groupStart + 4.0;
     
-    vec2 b0Coord = vec2(mod(b0Pos, u_bytesPerLine) / u_bytesPerLine, floor(b0Pos / u_bytesPerLine) / u_textureSize.y);
-    vec2 b1Coord = vec2(mod(b1Pos, u_bytesPerLine) / u_bytesPerLine, floor(b1Pos / u_bytesPerLine) / u_textureSize.y);
-    vec2 b2Coord = vec2(mod(b2Pos, u_bytesPerLine) / u_bytesPerLine, floor(b2Pos / u_bytesPerLine) / u_textureSize.y);
-    vec2 b3Coord = vec2(mod(b3Pos, u_bytesPerLine) / u_bytesPerLine, floor(b3Pos / u_bytesPerLine) / u_textureSize.y);
-    vec2 b4Coord = vec2(mod(b4Pos, u_bytesPerLine) / u_bytesPerLine, floor(b4Pos / u_bytesPerLine) / u_textureSize.y);
+    // Sample the 5 bytes
+    // CRITICAL: Add 0.5 to sample at pixel centers
+    float bytes[5];
+    for (int i = 0; i < 5; i++) {
+        float col = mod(bytePos[i], u_bytesPerLine);
+        float row = floor(bytePos[i] / u_bytesPerLine);
+        vec2 texCoord = vec2((col + 0.5) / u_bytesPerLine, (row + 0.5) / u_textureSize.y);
+        bytes[i] = texture2D(u_texture, texCoord).r * 255.0;
+    }
     
-    float b0 = texture2D(u_texture, b0Coord).r * 255.0;
-    float b1 = texture2D(u_texture, b1Coord).r * 255.0;
-    float b2 = texture2D(u_texture, b2Coord).r * 255.0;
-    float b3 = texture2D(u_texture, b3Coord).r * 255.0;
-    float b4 = texture2D(u_texture, b4Coord).r * 255.0;
-    
+    // Unpack based on pixel position in group
     float value10bit;
     if (pixelInGroup == 0) {
-        value10bit = (b0 * 4.0) + floor(b4 / 64.0);
+        // Pixel 0: bytes[0] has upper 8 bits, bytes[4] bits [7:6] have lower 2 bits
+        value10bit = bytes[0] * 4.0 + floor(bytes[4] / 64.0);
     } else if (pixelInGroup == 1) {
-        value10bit = (b1 * 4.0) + floor(mod(b4, 64.0) / 16.0);
+        // Pixel 1: bytes[1] has upper 8 bits, bytes[4] bits [5:4] have lower 2 bits  
+        value10bit = bytes[1] * 4.0 + floor(mod(bytes[4], 64.0) / 16.0);
     } else if (pixelInGroup == 2) {
-        value10bit = (b2 * 4.0) + floor(mod(b4, 16.0) / 4.0);
+        // Pixel 2: bytes[2] has upper 8 bits, bytes[4] bits [3:2] have lower 2 bits
+        value10bit = bytes[2] * 4.0 + floor(mod(bytes[4], 16.0) / 4.0);
     } else {
-        value10bit = (b3 * 4.0) + mod(b4, 4.0);
+        // Pixel 3: bytes[3] has upper 8 bits, bytes[4] bits [1:0] have lower 2 bits
+        value10bit = bytes[3] * 4.0 + mod(bytes[4], 4.0);
     }
     
     return value10bit / 1023.0;
@@ -78,7 +85,7 @@ void main() {
     vec2 imageCoord = v_texCoord * u_textureSize;
     vec2 pixelCoord = floor(imageCoord);
     
-    // Determine Bayer pattern position (BGGR)
+    // Determine Bayer pattern position (RGGB)
     vec2 alternate = mod(pixelCoord, 2.0);
     
     float C = sampleAt(pixelCoord);
@@ -97,30 +104,30 @@ void main() {
     
     if (alternate.y < 0.5) {
         if (alternate.x < 0.5) {
-            // Blue pixel at (0,0)
-            float red = (NW + NE + SW + SE) * 0.25;
+            // Red pixel at (0,0)
+            float red = C;
             float green = (N + S + E + W) * 0.25;
-            float blue = C;
+            float blue = (NW + NE + SW + SE) * 0.25;
             color = vec3(red, green, blue);
         } else {
-            // Green pixel in blue row at (1,0)
-            float red = (N + S) * 0.5;
-            float green = C;
-            float blue = (W + E) * 0.5;
-            color = vec3(red, green, blue);
-        }
-    } else {
-        if (alternate.x < 0.5) {
-            // Green pixel in red row at (0,1)
+            // Green pixel in red row at (1,0)
             float red = (W + E) * 0.5;
             float green = C;
             float blue = (N + S) * 0.5;
             color = vec3(red, green, blue);
+        }
+    } else {
+        if (alternate.x < 0.5) {
+            // Green pixel in blue row at (0,1)
+            float red = (N + S) * 0.5;
+            float green = C;
+            float blue = (W + E) * 0.5;
+            color = vec3(red, green, blue);
         } else {
-            // Red pixel at (1,1)
-            float red = C;
+            // Blue pixel at (1,1)
+            float red = (NW + NE + SW + SE) * 0.25;
             float green = (N + S + E + W) * 0.25;
-            float blue = (NW + NE + SW + SE) * 0.25;
+            float blue = C;
             color = vec3(red, green, blue);
         }
     }
@@ -204,6 +211,9 @@ export class Debayer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+        
+        // Set pixel store parameter for byte-aligned data
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
     }
     
     createShader(type, source) {
@@ -255,6 +265,8 @@ export class Debayer {
         gl.bindTexture(gl.TEXTURE_2D, this.texture)
         
         // Upload texture with bytesPerLine as width
+        // IMPORTANT: Make sure pixel unpack alignment is set to 1
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
         gl.texImage2D(
             gl.TEXTURE_2D,
             0,
