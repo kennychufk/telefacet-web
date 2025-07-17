@@ -110,6 +110,7 @@ export const useCameraStore = defineStore('camera', {
         const server = this.servers.find(s => s.index === serverIndex)
         if (server) {
           server.connected = true
+          console.log(`✅ Server ${serverIndex} connected successfully`)
         }
       })
       
@@ -117,6 +118,7 @@ export const useCameraStore = defineStore('camera', {
         const server = this.servers.find(s => s.index === serverIndex)
         if (server) {
           server.connected = false
+          console.warn(`⚠️ Server ${serverIndex} disconnected`)
         }
       })
       
@@ -146,6 +148,20 @@ export const useCameraStore = defineStore('camera', {
       manager.on('server-error', (data) => {
         console.error(`Server ${data.serverIndex} error:`, data.message)
         this.lastError = `Server ${data.serverIndex}: ${data.message}`
+      })
+      
+      manager.on('error', (data) => {
+        // Handle WebSocket errors without throwing unhandled exceptions
+        console.error(`WebSocket error on server ${data.serverIndex}:`, data.error)
+        if (data.type === 'websocket_error') {
+          // Don't show transient WebSocket errors to user unless they persist
+          console.log('WebSocket error handled - will attempt reconnection')
+        }
+      })
+      
+      manager.on('reconnect-failed', (serverIndex) => {
+        this.lastError = `Server ${serverIndex}: Failed to reconnect after multiple attempts`
+        console.error(`❌ Server ${serverIndex} reconnection failed permanently`)
       })
     },
     

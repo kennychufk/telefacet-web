@@ -5,16 +5,19 @@
       <ControlPanel />
       <CameraGrid />
     </div>
+    <DebugPanel :showDebug="showDebugPanel" @close="showDebugPanel = false" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useCameraStore } from './stores/cameraStore'
 import ControlPanel from './components/ControlPanel.vue'
 import CameraGrid from './components/CameraGrid.vue'
+import DebugPanel from './components/DebugPanel.vue'
 
 const store = useCameraStore()
+const showDebugPanel = ref(false)
 
 // Handle keyboard shortcuts
 function handleKeyPress(event) {
@@ -30,10 +33,22 @@ function handleKeyPress(event) {
     const nextIndex = (currentIndex + 1) % qualities.length
     store.setDebayerQuality(qualities[nextIndex])
   }
+  
+  // Toggle debug panel with 'D' key
+  if (event.key === 'd' || event.key === 'D') {
+    showDebugPanel.value = !showDebugPanel.value
+  }
 }
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyPress)
+  
+  // Log initial setup
+  console.log('Camera WebSocket Client Started')
+  console.log('Keyboard shortcuts:')
+  console.log('  P - Toggle control panel')
+  console.log('  Q - Toggle debayer quality')
+  console.log('  D - Toggle debug panel')
 })
 
 onUnmounted(() => {
@@ -41,6 +56,7 @@ onUnmounted(() => {
   
   // Clean up connections
   if (store.serverManager) {
+    console.log('Cleaning up connections...')
     store.serverManager.disconnectAll()
   }
 })

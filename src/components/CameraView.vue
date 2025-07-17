@@ -53,14 +53,19 @@ onMounted(() => {
       
       // Set up frame listener
       setupFrameListener()
+      
+      console.log(`✅ WebGL initialized for camera ${props.camera.globalId}`)
     } catch (error) {
-      console.error(`Failed to initialize WebGL for camera ${props.camera.globalId}:`, error)
+      console.error(`❌ Failed to initialize WebGL for camera ${props.camera.globalId}:`, error)
+      store.lastError = `Camera ${props.camera.globalId}: Failed to initialize WebGL - ${error.message}`
     }
   }
 })
 
 // Clean up on unmount
 onUnmounted(() => {
+  console.log(`🧹 Cleaning up camera ${props.camera.globalId}`)
+  
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId)
   }
@@ -72,6 +77,9 @@ onUnmounted(() => {
   if (debayer) {
     debayer.destroy()
   }
+  
+  // Clear frame queue
+  frameQueue.length = 0
 })
 
 // Frame queue for this camera
