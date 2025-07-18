@@ -104,6 +104,8 @@ export class WebSocketManager extends EventEmitter {
         }
         
         this.emit('disconnected', this.serverIndex)
+        // Clean up all chunk buffers on disconnect
+        this.chunkBuffers.clear()
         
         // Only reconnect if we were previously connected
         if (wasConnected) {
@@ -358,6 +360,16 @@ export class WebSocketManager extends EventEmitter {
     }
   }
 
+  cleanupCameraChunks(cameraId) {
+    // Clean up any incomplete chunk buffers for this camera
+    for (const [key, buffer] of this.chunkBuffers) {
+      if (buffer.header.cameraId === cameraId) {
+        this.logger.debug(`Cleaning up incomplete chunks for camera ${cameraId}`)
+        this.chunkBuffers.delete(key)
+      }
+    }
+  }
+
   updateFrameStats(cameraId) {
     const now = performance.now()
     const stats = this.frameStats.get(cameraId) || { count: 0, lastTime: now }
@@ -451,6 +463,10 @@ export class WebSocketManager extends EventEmitter {
 
   stopStream(cameraId) {
     this.logger.info(`Stopping stream for camera ${cameraId}`)
+
+    // Clean up any incomplete chunks for this camera
+    this.cleanupCameraChunks(cameraId)
+
     if (this.send({ cmd: 'stop_stream', camera_id: cameraId })) {
       this.streamingCameras.delete(cameraId)
       return true
