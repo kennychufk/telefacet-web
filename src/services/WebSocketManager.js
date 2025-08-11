@@ -7,7 +7,7 @@ const createLogger = (prefix) => {
     const timestamp = new Date().toISOString()
     console[level](`[${timestamp}] [${prefix}]`, ...args)
   }
-  
+
   return {
     debug: (...args) => log('debug', ...args),
     info: (...args) => log('info', ...args),
@@ -25,25 +25,25 @@ export class WebSocketManager extends EventEmitter {
     this.connected = false
     this.reconnectAttempts = 0
     this.maxReconnectAttempts = 10
-    this.reconnectDelay = 1000 // Start with 1 second
+    this.reconnectDelay = 1000
     this.cameras = []
     this.streamingCameras = new Set()
 
     // Frame statistics
-    this.frameStats = new Map() // cameraId -> { count, lastTime }
-    
-    // Chunked transfer state
-    this.chunkBuffers = new Map() // frameUuid -> { header, chunks, receivedChunks }
+    this.frameStats = new Map()
+
+    // Chunked transfer state - key by frame_uuid
+    this.chunkBuffers = new Map()
     this.CHUNK_START_MAGIC = 0x4348554E // 'CHUN' in hex
     this.CHUNK_DATA_MAGIC = 0x43484E4B  // 'CHNK' in hex
-    
+
     // Enhanced logging
     this.logger = createLogger(`Server${serverIndex}`)
-    
+
     // Connection state tracking
-    this.connectionState = 'disconnected' // disconnected, connecting, connected, error
+    this.connectionState = 'disconnected'
     this.lastError = null
-    
+
     // Statistics
     this.stats = {
       messagesReceived: 0,
@@ -53,17 +53,19 @@ export class WebSocketManager extends EventEmitter {
       errors: 0,
       reconnects: 0
     }
+
+    // Cleanup timer for old chunks
+    this.chunkCleanupInterval = setInterval(() => this.cleanupOldChunks(), 5000)
   }
 
   connect() {
     try {
       this.connectionState = 'connecting'
       this.logger.info(`Connecting to ${this.address}...`)
-      
+
       this.ws = new WebSocket(this.address)
       this.ws.binaryType = 'arraybuffer'
-      
-      // Set up timeout for connection
+
       const connectionTimeout = setTimeout(() => {
         if (this.connectionState === 'connecting') {
           this.logger.error('Connection timeout after 10 seconds')
@@ -78,7 +80,7 @@ export class WebSocketManager extends EventEmitter {
         this.reconnectAttempts = 0
         this.reconnectDelay = 1000
         this.lastError = null
-        
+
         this.logger.info(`Successfully connected to ${this.address}`)
         this.emit('connected', this.serverIndex)
 
@@ -91,23 +93,16 @@ export class WebSocketManager extends EventEmitter {
         const wasConnected = this.connected
         this.connected = false
         this.connectionState = 'disconnected'
-        
+
         this.logger.warn(`Connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}, Clean: ${event.wasClean}`)
-        
-        // Log additional context
+
         if (event.code === 1006) {
           this.logger.error('Abnormal closure - possible network error or server crash')
-        } else if (event.code === 1001) {
-          this.logger.info('Server is going away')
-        } else if (event.code === 1009) {
-          this.logger.error('Message too big - frame size exceeded limit')
         }
-        
+
         this.emit('disconnected', this.serverIndex)
-        // Clean up all chunk buffers on disconnect
         this.chunkBuffers.clear()
-        
-        // Only reconnect if we were previously connected
+
         if (wasConnected) {
           this.handleReconnect()
         }
@@ -117,18 +112,15 @@ export class WebSocketManager extends EventEmitter {
         this.connectionState = 'error'
         this.stats.errors++
         this.lastError = error
-        
-        // Enhanced error logging
+
         this.logger.error('WebSocket error occurred:', {
           readyState: this.ws ? this.ws.readyState : 'N/A',
           url: this.address,
-          error: error.message || 'Unknown error',
-          type: error.type || 'Unknown type'
+          error: error.message || 'Unknown error'
         })
-        
-        // Don't emit raw error event to prevent unhandled error
-        this.emit('error', { 
-          serverIndex: this.serverIndex, 
+
+        this.emit('error', {
+          serverIndex: this.serverIndex,
           error: error.message || 'WebSocket error',
           type: 'websocket_error'
         })
@@ -138,7 +130,7 @@ export class WebSocketManager extends EventEmitter {
         try {
           this.stats.messagesReceived++
           this.stats.bytesReceived += event.data.byteLength || event.data.length || 0
-          
+
           if (event.data instanceof ArrayBuffer) {
             this.handleBinaryMessage(event.data)
           } else {
@@ -156,24 +148,179 @@ export class WebSocketManager extends EventEmitter {
     }
   }
 
-  handleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.logger.error(`Max reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`)
-      this.emit('reconnect-failed', this.serverIndex)
+  handleBinaryMessage(data) {
+    try {
+      // Check minimum size for any valid message
+      if (data.byteLength < 8) {
+        this.logger.warn(`Binary message too small: ${data.byteLength} bytes`)
+        return
+      }
+
+      const view = new DataView(data)
+      const magic = view.getUint32(0, true)
+
+      // Check if this is a chunk start message
+      if (magic === this.CHUNK_START_MAGIC) {
+        this.handleChunkStart(data)
+      }
+      // Check if this is chunk data
+      else if (magic === this.CHUNK_DATA_MAGIC) {
+        this.handleChunkData(data)
+      }
+      // Unknown message type
+      else {
+        this.logger.warn(`Unknown binary message magic: 0x${magic.toString(16)}`)
+      }
+    } catch (error) {
+      this.logger.error('Error handling binary message:', error)
+      this.stats.errors++
+    }
+  }
+
+  handleChunkStart(data) {
+    if (data.byteLength !== 40) { // ChunkStartMarker (8) + ChunkHeader (32)
+      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 40`)
       return
     }
 
-    this.reconnectAttempts++
-    this.stats.reconnects++
-    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000)
+    const view = new DataView(data)
+    const version = view.getUint32(4, true)
 
-    this.logger.info(`Scheduling reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`)
+    if (version !== 1) {
+      this.logger.error(`Unsupported chunk version: ${version}`)
+      return
+    }
 
-    setTimeout(() => {
-      if (this.connectionState !== 'connected') {
-        this.connect()
+    // Parse chunk header
+    const frameUuid = view.getUint32(8, true)
+    const frameId = view.getUint32(12, true)
+    const cameraId = view.getUint32(16, true)
+    const totalChunks = view.getUint32(20, true)
+    const totalSize = view.getUint32(24, true)
+    const bytesPerLine = view.getUint32(28, true)
+    const width = view.getUint32(32, true)
+    const height = view.getUint32(36, true)
+
+    this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
+
+    // Initialize chunk buffer for this frame
+    this.chunkBuffers.set(frameUuid, {
+      header: {
+        frameId,
+        cameraId,
+        totalChunks,
+        totalSize,
+        bytesPerLine,
+        width,
+        height
+      },
+      chunks: new Array(totalChunks),
+      receivedChunks: 0,
+      startTime: performance.now()
+    })
+  }
+
+  handleChunkData(data) {
+    if (data.byteLength < 16) { // Minimum ChunkData header size
+      this.logger.error(`Chunk data too small: ${data.byteLength} bytes`)
+      return
+    }
+
+    const view = new DataView(data)
+    const frameUuid = view.getUint32(4, true)
+    const chunkIndex = view.getUint32(8, true)
+    const chunkSize = view.getUint32(12, true)
+
+    // Validate chunk data size
+    if (data.byteLength !== 16 + chunkSize) {
+      this.logger.error(`Invalid chunk data: expected ${16 + chunkSize} bytes, got ${data.byteLength}`)
+      return
+    }
+
+    // Find the corresponding chunk buffer
+    const buffer = this.chunkBuffers.get(frameUuid)
+    if (!buffer) {
+      this.logger.warn(`Received chunk for unknown frame UUID: ${frameUuid}`)
+      return
+    }
+
+    // Validate chunk index
+    if (chunkIndex >= buffer.header.totalChunks) {
+      this.logger.error(`Invalid chunk index ${chunkIndex} for frame with ${buffer.header.totalChunks} chunks`)
+      return
+    }
+
+    // Check for duplicate chunk
+    if (buffer.chunks[chunkIndex]) {
+      this.logger.warn(`Duplicate chunk ${chunkIndex} for frame ${buffer.header.frameId}`)
+      return
+    }
+
+    // Store chunk data
+    buffer.chunks[chunkIndex] = new Uint8Array(data, 16, chunkSize)
+    buffer.receivedChunks++
+
+    this.logger.debug(`Received chunk ${chunkIndex + 1}/${buffer.header.totalChunks} for frame ${buffer.header.frameId}`)
+
+    // Check if all chunks received
+    if (buffer.receivedChunks === buffer.header.totalChunks) {
+      this.assembleFrame(frameUuid, buffer)
+    }
+  }
+
+  assembleFrame(frameUuid, buffer) {
+    try {
+      // Validate all chunks are present
+      for (let i = 0; i < buffer.header.totalChunks; i++) {
+        if (!buffer.chunks[i]) {
+          this.logger.error(`Missing chunk ${i} when assembling frame ${buffer.header.frameId}`)
+          this.chunkBuffers.delete(frameUuid)
+          return
+        }
       }
-    }, delay)
+
+      // Reassemble frame
+      const frameData = new Uint8Array(buffer.header.totalSize)
+      let offset = 0
+
+      for (let i = 0; i < buffer.header.totalChunks; i++) {
+        frameData.set(buffer.chunks[i], offset)
+        offset += buffer.chunks[i].length
+      }
+
+      const assemblyTime = performance.now() - buffer.startTime
+      this.logger.debug(`Assembled frame ${buffer.header.frameId} from camera ${buffer.header.cameraId} in ${assemblyTime.toFixed(2)}ms`)
+
+      // Emit complete frame
+      this.stats.chunkedFramesReceived++
+      this.updateFrameStats(buffer.header.cameraId)
+      this.emitFrame(
+        buffer.header.cameraId,
+        buffer.header.frameId,
+        buffer.header.width,
+        buffer.header.height,
+        buffer.header.bytesPerLine,
+        frameData
+      )
+
+      // Clean up
+      this.chunkBuffers.delete(frameUuid)
+    } catch (error) {
+      this.logger.error(`Error assembling frame:`, error)
+      this.chunkBuffers.delete(frameUuid)
+    }
+  }
+
+  cleanupOldChunks() {
+    const now = performance.now()
+    const timeout = 5000 // 5 seconds
+
+    for (const [frameUuid, buffer] of this.chunkBuffers) {
+      if (now - buffer.startTime > timeout) {
+        this.logger.warn(`Dropping incomplete frame after ${timeout}ms: UUID ${frameUuid} (received ${buffer.receivedChunks}/${buffer.header.totalChunks} chunks)`)
+        this.chunkBuffers.delete(frameUuid)
+      }
+    }
   }
 
   handleTextMessage(data) {
@@ -213,160 +360,6 @@ export class WebSocketManager extends EventEmitter {
       }
     } catch (error) {
       this.logger.error('Failed to parse text message:', error, 'Raw data:', data)
-    }
-  }
-
-  handleBinaryMessage(data) {
-    try {
-      // Check if this is a chunked transfer by looking for the magic number
-      if (data.byteLength >= 8) {
-        const magicView = new DataView(data, 0, 8)
-        const magic = magicView.getUint32(0, true)
-        
-        if (magic === this.CHUNK_START_MAGIC || magic === this.CHUNK_DATA_MAGIC) {
-          // This is a chunked transfer
-          this.handleChunkedMessage(data)
-          return
-        }
-      }
-    } catch (error) {
-      this.logger.error('Error handling binary message:', error)
-      this.stats.errors++
-    }
-  }
-
-  handleChunkedMessage(data) {
-    try {
-      const view = new DataView(data)
-      
-      // Check if this is a chunk start message
-      if (data.byteLength == 40) { // ChunkStartMarker (8) + ChunkHeader (32)
-        const version = view.getUint32(4, true)
-        
-        if (version === 1) {
-          // Parse chunk header
-          const frameUuid = view.getUint32(8, true)
-          const frameId = view.getUint32(12, true)
-          const cameraId = view.getUint32(16, true)
-          const totalChunks = view.getUint32(20, true)
-          const totalSize = view.getUint32(24, true)
-          const bytesPerLine = view.getUint32(28, true)
-          const width = view.getUint32(32, true)
-          const height = view.getUint32(36, true)
-          
-          this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes total`)
-          
-          // Initialize chunk buffer for this frame
-          this.chunkBuffers.set(frameUuid, {
-            header: {
-              frameId,
-              cameraId,
-              totalChunks,
-              totalSize,
-              bytesPerLine,
-              width,
-              height
-            },
-            chunks: new Array(totalChunks),
-            receivedChunks: 0,
-            startTime: performance.now()
-          })
-          
-          return
-        }
-      }
-      
-      // This must be a chunk data message
-      if (data.byteLength >= 16) { // ChunkData header size
-        const frameUuid = view.getUint32(4, true)
-        const chunkIndex = view.getUint32(8, true)
-        const chunkSize = view.getUint32(12, true)
-        
-        // Validate chunk data
-        if (data.byteLength < 16 + chunkSize) {
-          this.logger.error(`Invalid chunk: expected ${chunkSize} bytes, got ${data.byteLength - 8}`)
-          return
-        }
-        
-        // Find the corresponding chunk buffer
-        let matchedBuffer = null
-        let matchedKey = null
-        
-        if (this.chunkBuffers.has(frameUuid)){
-          let buffer = this.chunkBuffers.get(frameUuid)
-          if (buffer.chunks[chunkIndex] === undefined && chunkIndex < buffer.header.totalChunks) {
-            matchedBuffer = buffer
-            matchedKey = frameUuid
-          }
-
-        }
-        
-        if (matchedBuffer) {
-          // Store chunk data
-          matchedBuffer.chunks[chunkIndex] = new Uint8Array(data, 16, chunkSize)
-          matchedBuffer.receivedChunks++
-          
-          this.logger.debug(`Received chunk ${chunkIndex + 1}/${matchedBuffer.header.totalChunks} for frame ${matchedBuffer.header.frameId} with size ${chunkSize}`)
-          
-          // Check if all chunks received
-          if (matchedBuffer.receivedChunks === matchedBuffer.header.totalChunks) {
-            // Reassemble frame
-            const frameData = new Uint8Array(matchedBuffer.header.totalSize)
-            let offset = 0
-            
-            for (let i = 0; i < matchedBuffer.header.totalChunks; i++) {
-              if (!matchedBuffer.chunks[i]) {
-                this.logger.error(`Missing chunk ${i} when reassembling frame`)
-                this.chunkBuffers.delete(matchedKey)
-                return
-              }
-              frameData.set(matchedBuffer.chunks[i], offset)
-              offset += matchedBuffer.chunks[i].length
-            }
-            
-            const assemblyTime = performance.now() - matchedBuffer.startTime
-            this.logger.debug(`Assembled chunked frame ${matchedBuffer.header.frameId} in ${assemblyTime.toFixed(2)}ms`)
-            
-            // Emit complete frame
-            this.stats.chunkedFramesReceived++
-            this.updateFrameStats(matchedBuffer.header.cameraId)
-            this.emitFrame(
-              matchedBuffer.header.cameraId,
-              matchedBuffer.header.frameId,
-              matchedBuffer.header.width,
-              matchedBuffer.header.height,
-              matchedBuffer.header.bytesPerLine,
-              frameData
-            )
-            
-            // Clean up
-            this.chunkBuffers.delete(matchedKey)
-          }
-        } else {
-          this.logger.warn(`Received chunk ${chunkIndex} with no matching buffer`)
-        }
-      }
-    } catch (error) {
-      this.logger.error('Error handling chunked message:', error)
-    }
-    
-    // Clean up old incomplete chunk buffers (older than 5 seconds)
-    const now = performance.now()
-    for (const [key, buffer] of this.chunkBuffers) {
-      if (now - buffer.startTime > 5000) {
-        this.logger.warn(`Dropping incomplete chunked frame after 5 seconds: ${key} (received ${buffer.receivedChunks}/${buffer.header.totalChunks} chunks)`)
-        this.chunkBuffers.delete(key)
-      }
-    }
-  }
-
-  cleanupCameraChunks(cameraId) {
-    // Clean up any incomplete chunk buffers for this camera
-    for (const [key, buffer] of this.chunkBuffers) {
-      if (buffer.header.cameraId === cameraId) {
-        this.logger.debug(`Cleaning up incomplete chunks for camera ${cameraId}`)
-        this.chunkBuffers.delete(key)
-      }
     }
   }
 
@@ -419,6 +412,28 @@ export class WebSocketManager extends EventEmitter {
     }
   }
 
+  // ... rest of the methods remain the same ...
+
+  handleReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.logger.error(`Max reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`)
+      this.emit('reconnect-failed', this.serverIndex)
+      return
+    }
+
+    this.reconnectAttempts++
+    this.stats.reconnects++
+    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000)
+
+    this.logger.info(`Scheduling reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`)
+
+    setTimeout(() => {
+      if (this.connectionState !== 'connected') {
+        this.connect()
+      }
+    }, delay)
+  }
+
   discoverCameras() {
     return this.send({ cmd: 'discover' })
   }
@@ -463,10 +478,6 @@ export class WebSocketManager extends EventEmitter {
 
   stopStream(cameraId) {
     this.logger.info(`Stopping stream for camera ${cameraId}`)
-
-    // Clean up any incomplete chunks for this camera
-    this.cleanupCameraChunks(cameraId)
-
     if (this.send({ cmd: 'stop_stream', camera_id: cameraId })) {
       this.streamingCameras.delete(cameraId)
       return true
@@ -482,6 +493,13 @@ export class WebSocketManager extends EventEmitter {
 
   disconnect() {
     this.logger.info('Disconnecting...')
+
+    // Clear cleanup interval
+    if (this.chunkCleanupInterval) {
+      clearInterval(this.chunkCleanupInterval)
+      this.chunkCleanupInterval = null
+    }
+
     if (this.ws) {
       this.ws.close(1000, 'Client disconnect')
       this.ws = null
@@ -493,7 +511,6 @@ export class WebSocketManager extends EventEmitter {
     this.chunkBuffers.clear()
   }
 
-  // Get connection statistics
   getStats() {
     return {
       ...this.stats,
@@ -505,7 +522,6 @@ export class WebSocketManager extends EventEmitter {
     }
   }
 
-  // Restore streaming state after reconnection
   restoreStreamingState() {
     this.logger.info(`Restoring streaming state for ${this.streamingCameras.size} cameras`)
     for (const cameraId of this.streamingCameras) {
@@ -514,12 +530,13 @@ export class WebSocketManager extends EventEmitter {
   }
 }
 
-// Manager for all server connections
+// Manager for all server connections remains the same...
 export class MultiServerManager extends EventEmitter {
+  // ... rest of the MultiServerManager code remains unchanged ...
   constructor() {
     super()
-    this.servers = new Map() // serverIndex -> WebSocketManager
-    this.globalCameraMap = new Map() // globalCameraId -> { serverIndex, localCameraId }
+    this.servers = new Map()
+    this.globalCameraMap = new Map()
     this.logger = createLogger('MultiServerManager')
   }
 
@@ -534,7 +551,6 @@ export class MultiServerManager extends EventEmitter {
     })
 
     manager.on('frame', (data) => {
-      // Convert to global camera ID
       const globalId = this.getGlobalCameraId(data.serverIndex, data.cameraId)
       if (globalId !== null) {
         this.emit('frame', {
@@ -570,7 +586,6 @@ export class MultiServerManager extends EventEmitter {
     this.globalCameraMap.clear()
     let globalId = 0
 
-    // Iterate through servers in order
     const sortedIndices = Array.from(this.servers.keys()).sort((a, b) => a - b)
 
     for (const serverIndex of sortedIndices) {
@@ -651,11 +666,10 @@ export class MultiServerManager extends EventEmitter {
     if (info) {
       const server = this.servers.get(info.serverIndex)
       if (server && server.connected) {
-        this.logger.info(`Starting stream for global camera ${globalCameraId} (server ${info.serverIndex}, local ${info.localCameraId})`)
+        this.logger.info(`Starting stream for global camera ${globalCameraId}`)
         return server.startStream(info.localCameraId)
       }
     }
-    this.logger.warn(`Cannot start stream for global camera ${globalCameraId} - not found or disconnected`)
     return false
   }
 
@@ -664,7 +678,6 @@ export class MultiServerManager extends EventEmitter {
     if (info) {
       const server = this.servers.get(info.serverIndex)
       if (server && server.connected) {
-        this.logger.info(`Stopping stream for global camera ${globalCameraId}`)
         return server.stopStream(info.localCameraId)
       }
     }
@@ -678,7 +691,6 @@ export class MultiServerManager extends EventEmitter {
     }
   }
 
-  // Get statistics for all servers
   getAllStats() {
     const stats = {}
     for (const [index, server] of this.servers) {

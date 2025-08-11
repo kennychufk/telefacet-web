@@ -197,7 +197,8 @@ export const useCameraStore = defineStore('camera', {
           this.saveModeConfigured = true
         }
 
-        // Wait a bit for configuration to complete
+        // Wait longer for cameras to fully initialize
+        // This gives the server time to start capturing frames
         await new Promise(resolve => setTimeout(resolve, 1000))
 
         this.camerasConfigured = true
@@ -297,10 +298,13 @@ export const useCameraStore = defineStore('camera', {
           return true
         }
       } else {
-        if (this.serverManager.startStream(globalId)) {
-          camera.streaming = true
-          return true
-        }
+        // Add a small delay before starting stream to ensure WebSocket is ready
+        setTimeout(() => {
+          if (this.serverManager.startStream(globalId)) {
+            camera.streaming = true
+          }
+        }, 100)
+        return true
       }
 
       return false
