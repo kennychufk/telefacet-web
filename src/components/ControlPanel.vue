@@ -135,6 +135,14 @@
         <div class="setting-item" v-if="store.config">
           <label>Frame Saving</label>
           <p class="setting-value">{{ store.config.frame_saving.mode }}</p>
+          
+          <!-- Show checkerboard pattern size when in checkerboard mode -->
+          <div v-if="store.config.frame_saving.mode === 'checkerboard'" class="checkerboard-info">
+            <p class="setting-detail">
+              Pattern: {{ store.config.frame_saving.checkerboard_cols }}×{{ store.config.frame_saving.checkerboard_rows }} 
+              ({{ store.config.frame_saving.checkerboard_full_res_detection ? 'Full' : 'Half' }} resolution)
+            </p>
+          </div>
         </div>
       </section>
       
@@ -388,6 +396,21 @@ function toggleCamera(globalId) {
   color: #888;
   font-size: 13px;
   margin-bottom: 4px;
+}
+
+.setting-detail {
+  color: #4a9eff;
+  font-size: 12px;
+  margin: 0;
+  font-family: monospace;
+}
+
+.checkerboard-info {
+  margin-top: 8px;
+  padding: 8px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
 }
 
 .quality-select {

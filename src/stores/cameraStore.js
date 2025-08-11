@@ -8,67 +8,67 @@ export const useCameraStore = defineStore('camera', {
     // Configuration
     config: null,
     configLoaded: false,
-    
+
     // Server management
     serverManager: null,
     servers: [], // Array of { index, address, connected, cameras }
-    
+
     // Camera management
     cameras: [], // Array of { globalId, serverIndex, localId, streaming, fps, awbGains }
     totalCameras: 0,
-    
+
     // System state
     camerasConfigured: false,
     camerasRunning: false,
     saveModeConfigured: false,
-    
+
     // UI state
     debayerQuality: 'quality', // 'quality'
     showControlPanel: true,
-    
+
     // Error handling
     lastError: null
   }),
-  
+
   getters: {
     streamingCameras: (state) => {
       return state.cameras.filter(cam => cam.streaming)
     },
-    
+
     connectedServers: (state) => {
       return state.servers.filter(server => server.connected)
     },
-    
+
     allServersConnected: (state) => {
-      return state.servers.length > 0 && 
-             state.servers.every(server => server.connected)
+      return state.servers.length > 0 &&
+        state.servers.every(server => server.connected)
     },
-    
+
     canConfigure: (state) => {
-      return state.configLoaded && 
-             state.allServersConnected && 
-             !state.camerasConfigured
+      return state.configLoaded &&
+        state.allServersConnected &&
+        !state.camerasConfigured
     },
-    
+
     canStartCameras: (state) => {
       return state.camerasConfigured && !state.camerasRunning
     },
-    
+
     canStopCameras: (state) => {
       return state.camerasRunning
     }
   },
-  
+
   actions: {
     async loadConfig(file) {
       try {
         const config = await configLoader.loadFromFile(file)
         this.config = config
         this.configLoaded = true
-        
+
         // Initialize servers
         this.initializeServers()
-        
+
         return true
       } catch (error) {
         this.lastError = error.message
@@ -76,16 +76,16 @@ export const useCameraStore = defineStore('camera', {
         return false
       }
     },
-    
+
     initializeServers() {
       if (!this.config) return
-      
+
       // Create server manager
       this.serverManager = new MultiServerManager()
-      
+
       // Set up event listeners
       this.setupEventListeners()
-      
+
       // Initialize server list
       this.servers = this.config.servers.map((server, index) => ({
         index,
@@ -93,19 +93,19 @@ export const useCameraStore = defineStore('camera', {
         connected: false,
         cameras: 0
       }))
-      
+
       // Add servers to manager
       this.servers.forEach(server => {
         this.serverManager.addServer(server.address, server.index)
       })
-      
+
       // Connect to all servers
       this.serverManager.connectAll()
     },
-    
+
     setupEventListeners() {
       const manager = this.serverManager
-      
+
       manager.on('server-connected', (serverIndex) => {
         const server = this.servers.find(s => s.index === serverIndex)
         if (server) {
@@ -113,7 +113,7 @@ export const useCameraStore = defineStore('camera', {
           console.log(`✅ Server ${serverIndex} connected successfully`)
         }
       })
-      
+
       manager.on('server-disconnected', (serverIndex) => {
         const server = this.servers.find(s => s.index === serverIndex)
         if (server) {
@@ -121,7 +121,7 @@ export const useCameraStore = defineStore('camera', {
           console.warn(`⚠️ Server ${serverIndex} disconnected`)
         }
       })
-      
+
       manager.on('cameras-discovered', (data) => {
         const server = this.servers.find(s => s.index === data.serverIndex)
         if (server) {
@@ -129,27 +129,27 @@ export const useCameraStore = defineStore('camera', {
         }
         this.updateCameraList()
       })
-      
+
       manager.on('camera-map-updated', (cameraMap) => {
         this.updateCameraList()
       })
-      
+
       manager.on('fps-update', (data) => {
         const camera = this.cameras.find(cam => cam.globalId === data.globalCameraId)
         if (camera) {
           camera.fps = data.fps
         }
       })
-      
+
       manager.on('status', (data) => {
         console.log(`Server ${data.serverIndex} status:`, data.message)
       })
-      
+
       manager.on('server-error', (data) => {
         console.error(`Server ${data.serverIndex} error:`, data.message)
         this.lastError = `Server ${data.serverIndex}: ${data.message}`
       })
-      
+
       manager.on('error', (data) => {
         // Handle WebSocket errors without throwing unhandled exceptions
         console.error(`WebSocket error on server ${data.serverIndex}:`, data.error)
@@ -158,19 +158,19 @@ export const useCameraStore = defineStore('camera', {
           console.log('WebSocket error handled - will attempt reconnection')
         }
       })
-      
+
       manager.on('reconnect-failed', (serverIndex) => {
         this.lastError = `Server ${serverIndex}: Failed to reconnect after multiple attempts`
         console.error(`❌ Server ${serverIndex} reconnection failed permanently`)
       })
     },
-    
+
     updateCameraList() {
       const cameraMap = this.serverManager.globalCameraMap
-      
+
       this.cameras = Array.from(cameraMap.entries()).map(([globalId, info]) => {
         const awbGains = configLoader.getAWBGains(globalId)
-        
+
         return {
           globalId,
           serverIndex: info.serverIndex,
@@ -180,26 +180,26 @@ export const useCameraStore = defineStore('camera', {
           awbGains
         }
       })
-      
+
       this.totalCameras = this.cameras.length
     },
-    
+
     async configureAllCameras() {
       if (!this.canConfigure) return false
-      
+
       try {
         const cameraConfig = this.config.camera_config
         this.serverManager.configureAll(cameraConfig)
-        
+
         // Set save mode as part of configuration (only if not already set)
         if (!this.saveModeConfigured) {
           await this.setSaveMode()
           this.saveModeConfigured = true
         }
-        
+
         // Wait a bit for configuration to complete
         await new Promise(resolve => setTimeout(resolve, 1000))
-        
+
         this.camerasConfigured = true
         return true
       } catch (error) {
@@ -208,17 +208,27 @@ export const useCameraStore = defineStore('camera', {
         return false
       }
     },
-    
+
     async setSaveMode() {
       if (!this.config) return false
-      
+
       try {
         const saveConfig = this.config.frame_saving
-        this.serverManager.setSaveModeAll(saveConfig.mode, {
+        const params = {
           prefix: saveConfig.prefix,
           batch_size: saveConfig.batch_size,
           writer_threads: saveConfig.writer_threads
-        })
+        }
+
+        // Add checkerboard parameters if mode is checkerboard
+        if (saveConfig.mode === 'checkerboard') {
+          params.checkerboard_rows = saveConfig.checkerboard_rows
+          params.checkerboard_cols = saveConfig.checkerboard_cols
+          params.checkerboard_full_res_detection = saveConfig.checkerboard_full_res_detection
+          params.checkerboard_num_threads = saveConfig.checkerboard_num_threads
+        }
+
+        this.serverManager.setSaveModeAll(saveConfig.mode, params)
         return true
       } catch (error) {
         this.lastError = 'Failed to set save mode'
@@ -226,17 +236,17 @@ export const useCameraStore = defineStore('camera', {
         return false
       }
     },
-    
+
     async startAllCameras() {
       if (!this.canStartCameras) return false
-      
+
       try {
         // Start cameras
         this.serverManager.startAllCameras()
-        
+
         // Wait a bit for cameras to start
         await new Promise(resolve => setTimeout(resolve, 500))
-        
+
         this.camerasRunning = true
         return true
       } catch (error) {
@@ -245,10 +255,10 @@ export const useCameraStore = defineStore('camera', {
         return false
       }
     },
-    
+
     async stopAllCameras() {
       if (!this.canStopCameras) return false
-      
+
       try {
         // Stop all streaming first
         this.cameras.forEach(camera => {
@@ -256,10 +266,10 @@ export const useCameraStore = defineStore('camera', {
             this.toggleCameraStream(camera.globalId)
           }
         })
-        
+
         // Stop cameras
         this.serverManager.stopAllCameras()
-        
+
         this.camerasRunning = false
         this.camerasConfigured = false
         this.saveModeConfigured = false
@@ -270,16 +280,16 @@ export const useCameraStore = defineStore('camera', {
         return false
       }
     },
-    
+
     toggleCameraStream(globalId) {
       const camera = this.cameras.find(cam => cam.globalId === globalId)
       if (!camera) return false
-      
+
       if (!this.camerasRunning) {
         this.lastError = 'Cameras must be running to stream'
         return false
       }
-      
+
       if (camera.streaming) {
         if (this.serverManager.stopStream(globalId)) {
           camera.streaming = false
@@ -292,26 +302,26 @@ export const useCameraStore = defineStore('camera', {
           return true
         }
       }
-      
+
       return false
     },
-    
+
     setDebayerQuality(quality) {
       this.debayerQuality = quality
     },
-    
+
     toggleControlPanel() {
       this.showControlPanel = !this.showControlPanel
     },
-    
+
     clearError() {
       this.lastError = null
     },
-    
+
     // Get optimal grid dimensions based on number of streaming cameras
     getGridDimensions() {
       const count = this.streamingCameras.length
-      
+
       if (count === 0) return { cols: 0, rows: 0 }
       if (count === 1) return { cols: 1, rows: 1 }
       if (count === 2) return { cols: 2, rows: 1 }
@@ -320,7 +330,7 @@ export const useCameraStore = defineStore('camera', {
       if (count <= 9) return { cols: 3, rows: 3 }
       if (count <= 12) return { cols: 4, rows: 3 }
       if (count <= 16) return { cols: 4, rows: 4 }
-      
+
       // For more than 16, calculate dynamically
       const cols = Math.ceil(Math.sqrt(count * 1.5)) // Prefer landscape
       const rows = Math.ceil(count / cols)

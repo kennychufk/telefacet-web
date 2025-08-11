@@ -59,8 +59,37 @@ npm run preview
 YAML files define:
 - Server addresses (WebSocket URLs)
 - Camera configuration (resolution, cropping, v4l2 buffers)
-- Frame saving options (none/buffer/batch modes)
+- Frame saving options (none/buffer/batch/checkerboard modes)
 - Per-camera AWB gains for color correction
+
+#### Frame Saving Modes
+
+1. **none**: No frame saving
+2. **buffer**: Buffer frames in memory, write all at once when stopping
+3. **batch**: Write frames in batches during capture
+4. **checkerboard**: Detect and save only frames containing checkerboard patterns
+
+#### Checkerboard Mode Configuration
+
+When using `mode: checkerboard`, additional parameters are available:
+
+```yaml
+frame_saving:
+  mode: checkerboard
+  prefix: calibration
+  batch_size: 10
+  writer_threads: 4
+  checkerboard_rows: 8        # Inner corners vertically
+  checkerboard_cols: 11       # Inner corners horizontally  
+  checkerboard_full_res_detection: false  # false=half-res (faster), true=full-res
+  checkerboard_num_threads: 4 # Threads for debayering
+```
+
+The checkerboard mode:
+- Debayers each frame using NEON-optimized processing
+- Detects checkerboard patterns using OpenCV
+- Saves only the original raw Bayer data of frames containing checkerboards
+- Preserves frame IDs in filenames (non-sequential if some frames don't contain patterns)
 
 ### WebGL Debayering
 
