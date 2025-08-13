@@ -80,7 +80,8 @@ export class ConfigLoader {
     if (!config.frame_saving) {
       config.frame_saving = {
         mode: 'none',
-        prefix: 'camera',
+        output_dir: 'camera_frames',
+        prepend_timestamp_to_dir: false,
         batch_size: 10,
         writer_threads: 4
       }
@@ -92,9 +93,30 @@ export class ConfigLoader {
     }
 
     // Set defaults for common parameters
-    if (typeof config.frame_saving.prefix !== 'string') {
-      config.frame_saving.prefix = 'camera'
+    if (typeof config.frame_saving.output_dir !== 'string') {
+      config.frame_saving.output_dir = 'camera_frames'
     }
+
+    // Basic validation for output_dir
+    const outputDir = config.frame_saving.output_dir.trim()
+    if (outputDir === '') {
+      throw new Error('frame_saving.output_dir cannot be empty')
+    }
+
+    // Check for invalid characters (basic validation)
+    const invalidChars = /[<>:"|?*\x00-\x1f]/
+    if (invalidChars.test(outputDir)) {
+      throw new Error('frame_saving.output_dir contains invalid characters')
+    }
+
+    // Update the config with trimmed value
+    config.frame_saving.output_dir = outputDir
+
+    // Validate prepend_timestamp_to_dir
+    if (typeof config.frame_saving.prepend_timestamp_to_dir !== 'boolean') {
+      config.frame_saving.prepend_timestamp_to_dir = false
+    }
+
     if (typeof config.frame_saving.batch_size !== 'number') {
       config.frame_saving.batch_size = 10
     }
@@ -210,7 +232,8 @@ export class ConfigLoader {
       },
       frame_saving: {
         mode: 'none',
-        prefix: 'camera',
+        output_dir: 'camera_frames',
+        prepend_timestamp_to_dir: false,
         batch_size: 10,
         writer_threads: 4,
         // Optional checkerboard parameters (only used when mode is 'checkerboard')

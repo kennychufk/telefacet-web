@@ -76,7 +76,7 @@ When using `mode: checkerboard`, additional parameters are available:
 ```yaml
 frame_saving:
   mode: checkerboard
-  prefix: calibration
+  output_dir: calibration
   batch_size: 10
   writer_threads: 4
   checkerboard_rows: 8        # Inner corners vertically
