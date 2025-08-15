@@ -94,6 +94,15 @@
           >
             Stop All Cameras
           </button>
+          
+          <button 
+            class="control-button reset"
+            :disabled="!store.hasConnectedServers"
+            @click="resetFrameCounts"
+            title="Reset frame counters on all cameras"
+          >
+            Reset Frame Counts
+          </button>
         </div>
         
         <div class="camera-list">
@@ -195,6 +204,10 @@ async function stopCameras() {
 
 function toggleCamera(globalId) {
   store.toggleCameraStream(globalId)
+}
+
+async function resetFrameCounts() {
+  await store.resetFrameCounts()
 }
 </script>
 
@@ -334,6 +347,15 @@ function toggleCamera(globalId) {
 
 .control-button.stop:hover:not(:disabled) {
   background: #991b1b;
+}
+
+.control-button.reset {
+  background: #f59e0b;
+  border-color: #d97706;
+}
+
+.control-button.reset:hover:not(:disabled) {
+  background: #d97706;
 }
 
 /* Camera List */

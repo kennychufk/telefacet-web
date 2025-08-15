@@ -491,6 +491,11 @@ export class WebSocketManager extends EventEmitter {
     return this.send({ cmd: 'stop_cameras' })
   }
 
+  resetFrameCounts() {
+    this.logger.info('Resetting frame counts')
+    return this.send({ cmd: 'reset_frame_counts' })
+  }
+
   disconnect() {
     this.logger.info('Disconnecting...')
 
@@ -657,6 +662,15 @@ export class MultiServerManager extends EventEmitter {
     for (const server of this.servers.values()) {
       if (server.connected) {
         server.stopCameras()
+      }
+    }
+  }
+
+  resetFrameCountsAll() {
+    this.logger.info('Resetting frame counts on all servers')
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.resetFrameCounts()
       }
     }
   }

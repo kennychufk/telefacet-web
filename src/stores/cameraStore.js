@@ -44,6 +44,10 @@ export const useCameraStore = defineStore('camera', {
         state.servers.every(server => server.connected)
     },
 
+    hasConnectedServers: (state) => {
+      return state.servers.some(server => server.connected)
+    },
+
     canConfigure: (state) => {
       return state.configLoaded &&
         state.allServersConnected &&
@@ -278,6 +282,23 @@ export const useCameraStore = defineStore('camera', {
         return true
       } catch (error) {
         this.lastError = 'Failed to stop cameras'
+        console.error(error)
+        return false
+      }
+    },
+
+    async resetFrameCounts() {
+      if (!this.hasConnectedServers) {
+        this.lastError = 'No connected servers to reset frame counts'
+        return false
+      }
+
+      try {
+        this.serverManager.resetFrameCountsAll()
+        console.log('✅ Frame counts reset on all connected servers')
+        return true
+      } catch (error) {
+        this.lastError = 'Failed to reset frame counts'
         console.error(error)
         return false
       }
