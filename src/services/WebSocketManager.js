@@ -1,4 +1,4 @@
-// src/services/WebSocketManager.js
+// src/services/WebSocketManager.js - Updated to support header only mode
 import { EventEmitter } from 'events'
 
 // Enhanced logging utility
@@ -28,6 +28,7 @@ export class WebSocketManager extends EventEmitter {
     this.reconnectDelay = 1000
     this.cameras = []
     this.streamingCameras = new Set()
+    this.headerOnlyMode = false // Track header only mode state
 
     // Frame statistics
     this.frameStats = new Map()
@@ -200,6 +201,25 @@ export class WebSocketManager extends EventEmitter {
     const bytesPerLine = view.getUint32(28, true)
     const width = view.getUint32(32, true)
     const height = view.getUint32(36, true)
+
+    // Check if this is header only mode (totalChunks = 0, totalSize = 0)
+    if (totalChunks === 0 && totalSize === 0) {
+      this.logger.debug(`Header only frame ${frameId} from camera ${cameraId}`)
+      
+      // Update frame stats for FPS calculation
+      this.updateFrameStats(cameraId)
+      
+      // Emit header-only frame event with empty data
+      this.emitFrame(
+        cameraId,
+        frameId,
+        width,
+        height,
+        bytesPerLine,
+        new Uint8Array(0) // Empty data for header only mode
+      )
+      return
+    }
 
     this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
 
@@ -391,7 +411,8 @@ export class WebSocketManager extends EventEmitter {
       width,
       height,
       bytesPerLine,
-      data
+      data,
+      isHeaderOnly: data.length === 0 // Mark header-only frames
     })
   }
 
@@ -412,7 +433,12 @@ export class WebSocketManager extends EventEmitter {
     }
   }
 
-  // ... rest of the methods remain the same ...
+  // Add new method to set header only mode
+  setHeaderOnlyMode(enabled) {
+    this.headerOnlyMode = enabled
+    this.logger.info(`Setting header only mode to ${enabled}`)
+    return this.send({ cmd: 'set_header_only', enabled: enabled })
+  }
 
   handleReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
@@ -523,7 +549,8 @@ export class WebSocketManager extends EventEmitter {
       connected: this.connected,
       reconnectAttempts: this.reconnectAttempts,
       chunkBuffersActive: this.chunkBuffers.size,
-      lastError: this.lastError
+      lastError: this.lastError,
+      headerOnlyMode: this.headerOnlyMode
     }
   }
 
@@ -535,9 +562,8 @@ export class WebSocketManager extends EventEmitter {
   }
 }
 
-// Manager for all server connections remains the same...
+// MultiServerManager for managing multiple server connections
 export class MultiServerManager extends EventEmitter {
-  // ... rest of the MultiServerManager code remains unchanged ...
   constructor() {
     super()
     this.servers = new Map()
@@ -644,6 +670,15 @@ export class MultiServerManager extends EventEmitter {
     for (const server of this.servers.values()) {
       if (server.connected) {
         server.setSaveMode(mode, params)
+      }
+    }
+  }
+
+  setHeaderOnlyModeAll(enabled) {
+    this.logger.info(`Setting header only mode to ${enabled} on all servers`)
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.setHeaderOnlyMode(enabled)
       }
     }
   }

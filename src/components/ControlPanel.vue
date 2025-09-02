@@ -105,6 +105,22 @@
           </button>
         </div>
         
+        <!-- Header Only Toggle -->
+        <div class="header-only-toggle">
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              v-model="store.headerOnlyMode"
+              @change="toggleHeaderOnly"
+              :disabled="!store.hasConnectedServers"
+            />
+            <span class="toggle-text">Header Only Mode</span>
+          </label>
+          <p class="toggle-description">
+            {{ store.headerOnlyMode ? 'Sending headers only (no frame data)' : 'Sending full frame data' }}
+          </p>
+        </div>
+        
         <div class="camera-list">
           <div 
             v-for="camera in store.cameras"
@@ -208,6 +224,10 @@ function toggleCamera(globalId) {
 
 async function resetFrameCounts() {
   await store.resetFrameCounts()
+}
+
+async function toggleHeaderOnly() {
+  await store.setHeaderOnlyMode(store.headerOnlyMode)
 }
 </script>
 
@@ -356,6 +376,45 @@ async function resetFrameCounts() {
 
 .control-button.reset:hover:not(:disabled) {
   background: #d97706;
+}
+
+/* Header Only Toggle */
+.header-only-toggle {
+  margin: 16px 0;
+  padding: 12px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle-label input[type="checkbox"] {
+  margin-right: 8px;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.toggle-label input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.toggle-text {
+  color: #ddd;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.toggle-description {
+  margin: 8px 0 0 26px;
+  color: #888;
+  font-size: 12px;
 }
 
 /* Camera List */

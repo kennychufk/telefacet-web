@@ -25,6 +25,7 @@ export const useCameraStore = defineStore('camera', {
     // UI state
     debayerQuality: 'quality', // 'quality'
     showControlPanel: true,
+    headerOnlyMode: false, // New state for header only mode
 
     // Error handling
     lastError: null
@@ -299,6 +300,24 @@ export const useCameraStore = defineStore('camera', {
         return true
       } catch (error) {
         this.lastError = 'Failed to reset frame counts'
+        console.error(error)
+        return false
+      }
+    },
+
+    async setHeaderOnlyMode(enabled) {
+      if (!this.hasConnectedServers) {
+        this.lastError = 'No connected servers'
+        return false
+      }
+
+      try {
+        // Send the header only command to all servers
+        this.serverManager.setHeaderOnlyModeAll(enabled)
+        console.log(`✅ Header only mode ${enabled ? 'enabled' : 'disabled'}`)
+        return true
+      } catch (error) {
+        this.lastError = 'Failed to set header only mode'
         console.error(error)
         return false
       }

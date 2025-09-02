@@ -36,6 +36,7 @@ let debayer = null
 let animationFrameId = null
 let lastFrameTime = 0
 const frameDropThreshold = 50 // Drop frames if more than 50ms behind
+let blackFrameRendered = false // Track if we've rendered a black frame for header-only mode
 
 // Canvas dimensions from config
 const canvasWidth = computed(() => store.config?.camera_config?.width || 1456)
@@ -91,6 +92,19 @@ function setupFrameListener() {
   frameHandler = (data) => {
     // Only process frames for this camera
     if (data.globalCameraId === props.camera.globalId) {
+      // Check if this is a header-only frame
+      if (data.isHeaderOnly || data.data.length === 0) {
+        // For header-only frames, render black canvas but still update FPS
+        if (!blackFrameRendered || !store.headerOnlyMode) {
+          renderBlackFrame()
+          blackFrameRendered = true
+        }
+        return
+      }
+      
+      // Reset black frame flag when we get real data
+      blackFrameRendered = false
+      
       // Drop old frames if queue is building up
       const now = performance.now()
       if (frameQueue.length > 0 && now - lastFrameTime > frameDropThreshold) {
@@ -114,6 +128,17 @@ function setupFrameListener() {
   }
   
   store.serverManager.on('frame', frameHandler)
+}
+
+// Render a black frame for header-only mode
+function renderBlackFrame() {
+  if (!canvas.value) return
+  
+  const ctx = canvas.value.getContext('2d')
+  if (ctx) {
+    ctx.fillStyle = 'black'
+    ctx.fillRect(0, 0, canvas.value.width, canvas.value.height)
+  }
 }
 
 // Render loop using requestAnimationFrame
@@ -146,6 +171,18 @@ function renderLoop() {
 watch(() => store.debayerQuality, (newQuality) => {
   if (debayer) {
     debayer.setQuality(newQuality)
+  }
+})
+
+// Watch for header-only mode changes
+watch(() => store.headerOnlyMode, (isHeaderOnly) => {
+  if (isHeaderOnly && streaming.value) {
+    // When switching to header-only mode, clear the canvas
+    renderBlackFrame()
+    blackFrameRendered = true
+  } else {
+    // Reset the flag when switching back to normal mode
+    blackFrameRendered = false
   }
 })
 
