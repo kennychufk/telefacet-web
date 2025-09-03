@@ -14,6 +14,7 @@
         <div class="camera-stats" v-if="streaming">
           <span class="camera-fps">{{ camera.fps }} FPS</span>
           <span class="camera-frame-id">Frame {{ latestFrameId }}</span>
+          <span class="camera-frames-saved">Saved {{ camera.framesSaved }}</span>
         </div>
         <span class="camera-status" v-else>No Signal</span>
       </div>
@@ -268,6 +269,11 @@ watch(streaming, (isStreaming) => {
 
 .camera-frame-id {
   color: #4a9eff;
+  font-size: 12px;
+}
+
+.camera-frames-saved {
+  color: #ff9500;
   font-size: 12px;
 }
 

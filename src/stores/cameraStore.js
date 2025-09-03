@@ -1,4 +1,4 @@
-// src/stores/cameraStore.js
+// src/stores/cameraStore.js - Updated to track frames_saved per camera
 import { defineStore } from 'pinia'
 import { MultiServerManager } from '../services/WebSocketManager'
 import { configLoader } from '../services/ConfigLoader'
@@ -14,7 +14,7 @@ export const useCameraStore = defineStore('camera', {
     servers: [], // Array of { index, address, connected, cameras }
 
     // Camera management
-    cameras: [], // Array of { globalId, serverIndex, localId, streaming, fps, awbGains }
+    cameras: [], // Array of { globalId, serverIndex, localId, streaming, fps, framesSaved, awbGains }
     totalCameras: 0,
 
     // System state
@@ -146,6 +146,14 @@ export const useCameraStore = defineStore('camera', {
         }
       })
 
+      // Handle frame events to update frames_saved counter
+      manager.on('frame', (data) => {
+        const camera = this.cameras.find(cam => cam.globalId === data.globalCameraId)
+        if (camera && typeof data.framesSaved === 'number') {
+          camera.framesSaved = data.framesSaved
+        }
+      })
+
       manager.on('status', (data) => {
         console.log(`Server ${data.serverIndex} status:`, data.message)
       })
@@ -182,6 +190,7 @@ export const useCameraStore = defineStore('camera', {
           localId: info.localCameraId,
           streaming: false,
           fps: 0,
+          framesSaved: 0, // Initialize frames saved counter
           awbGains
         }
       })
@@ -296,6 +305,12 @@ export const useCameraStore = defineStore('camera', {
 
       try {
         this.serverManager.resetFrameCountsAll()
+        
+        // Also reset local frames_saved counters
+        this.cameras.forEach(camera => {
+          camera.framesSaved = 0
+        })
+        
         console.log('✅ Frame counts reset on all connected servers')
         return true
       } catch (error) {
