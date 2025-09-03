@@ -11,7 +11,10 @@
     <div class="camera-overlay">
       <div class="camera-info">
         <span class="camera-name">cam{{ camera.globalId }}</span>
-        <span class="camera-fps" v-if="streaming">{{ camera.fps }} FPS</span>
+        <div class="camera-stats" v-if="streaming">
+          <span class="camera-fps">{{ camera.fps }} FPS</span>
+          <span class="camera-frame-id">Frame {{ latestFrameId }}</span>
+        </div>
         <span class="camera-status" v-else>No Signal</span>
       </div>
     </div>
@@ -32,6 +35,7 @@ const props = defineProps({
 
 const store = useCameraStore()
 const canvas = ref(null)
+const latestFrameId = ref(0) // Track the latest frame ID
 let debayer = null
 let animationFrameId = null
 let lastFrameTime = 0
@@ -92,9 +96,12 @@ function setupFrameListener() {
   frameHandler = (data) => {
     // Only process frames for this camera
     if (data.globalCameraId === props.camera.globalId) {
+      // Update the latest frame ID regardless of header-only mode
+      latestFrameId.value = data.frameId
+      
       // Check if this is a header-only frame
       if (data.isHeaderOnly || data.data.length === 0) {
-        // For header-only frames, render black canvas but still update FPS
+        // For header-only frames, render black canvas but still update FPS and frame ID
         if (!blackFrameRendered || !store.headerOnlyMode) {
           renderBlackFrame()
           blackFrameRendered = true
@@ -117,6 +124,7 @@ function setupFrameListener() {
         width: data.width,
         height: data.height,
         bytesPerLine: data.bytesPerLine,
+        frameId: data.frameId,
         timestamp: now
       })
       
@@ -196,6 +204,8 @@ watch(streaming, (isStreaming) => {
       cancelAnimationFrame(animationFrameId)
       animationFrameId = null
     }
+    // Reset frame ID when stopping
+    latestFrameId.value = 0
   }
 })
 </script>
@@ -234,7 +244,7 @@ watch(streaming, (isStreaming) => {
 .camera-info {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   color: white;
   font-size: 14px;
   font-family: monospace;
@@ -245,8 +255,20 @@ watch(streaming, (isStreaming) => {
   font-weight: bold;
 }
 
+.camera-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
 .camera-fps {
   color: #00ff00;
+}
+
+.camera-frame-id {
+  color: #4a9eff;
+  font-size: 12px;
 }
 
 .camera-status {
