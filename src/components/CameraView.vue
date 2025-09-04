@@ -1,14 +1,16 @@
 <!-- src/components/CameraView.vue -->
 <template>
-  <div class="camera-view" :class="{ 'no-signal': !streaming }">
+  <div class="camera-view" :class="{ 'no-signal': !streaming, 'header-only': isHeaderOnlyMode }">
     <canvas 
       ref="canvas" 
       class="camera-canvas"
+      :class="{ 'hidden': isHeaderOnlyMode }"
       :width="canvasWidth"
       :height="canvasHeight"
     />
     
-    <div class="camera-overlay">
+    <!-- Normal overlay for image mode -->
+    <div class="camera-overlay" v-if="!isHeaderOnlyMode">
       <div class="camera-info">
         <span class="camera-name">cam{{ camera.globalId }}</span>
         <div class="camera-stats" v-if="streaming">
@@ -17,6 +19,20 @@
           <span class="camera-frames-saved">Saved {{ camera.framesSaved }}</span>
         </div>
         <span class="camera-status" v-else>No Signal</span>
+      </div>
+    </div>
+    
+    <!-- Maximized overlay for header-only mode -->
+    <div class="camera-overlay-maximized" v-if="isHeaderOnlyMode">
+      <div class="camera-info-maximized">
+        <div class="camera-name-large">cam{{ camera.globalId }}</div>
+        <div class="camera-stats-large" v-if="streaming">
+          <div class="stat-large fps-large">{{ camera.fps }} FPS</div>
+          <div class="stat-large frame-id-large">Frame {{ latestFrameId }}</div>
+          <div class="stat-large frames-saved-large">Saved {{ camera.framesSaved }}</div>
+        </div>
+        <div class="camera-status-large" v-else>No Signal</div>
+        <div class="header-only-indicator">Header Only Mode</div>
       </div>
     </div>
   </div>
@@ -36,12 +52,12 @@ const props = defineProps({
 
 const store = useCameraStore()
 const canvas = ref(null)
-const latestFrameId = ref(0) // Track the latest frame ID
+const latestFrameId = ref(0)
 let debayer = null
 let animationFrameId = null
 let lastFrameTime = 0
-const frameDropThreshold = 50 // Drop frames if more than 50ms behind
-let blackFrameRendered = false // Track if we've rendered a black frame for header-only mode
+const frameDropThreshold = 50
+let blackFrameRendered = false
 
 // Canvas dimensions from config
 const canvasWidth = computed(() => store.config?.camera_config?.width || 1456)
@@ -49,6 +65,9 @@ const canvasHeight = computed(() => store.config?.camera_config?.height || 1088)
 
 // Check if this camera is streaming
 const streaming = computed(() => props.camera.streaming)
+
+// Check if we're in header-only mode
+const isHeaderOnlyMode = computed(() => store.headerOnlyMode)
 
 // Initialize WebGL debayer
 onMounted(() => {
@@ -225,13 +244,24 @@ watch(streaming, (isStreaming) => {
   opacity: 0.5;
 }
 
+.camera-view.header-only {
+  background: #0f1419; /* Darker background for header-only mode */
+}
+
 .camera-canvas {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
+  transition: opacity 0.3s ease;
 }
 
+.camera-canvas.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Normal overlay for image mode */
 .camera-overlay {
   position: absolute;
   top: 0;
@@ -279,5 +309,129 @@ watch(streaming, (isStreaming) => {
 
 .camera-status {
   color: #ff6666;
+}
+
+/* Maximized overlay for header-only mode */
+.camera-overlay-maximized {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(15, 20, 25, 0.9), rgba(26, 26, 26, 0.9));
+  pointer-events: none;
+}
+
+.camera-info-maximized {
+  text-align: center;
+  color: white;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+  transform: scale(1);
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.camera-name-large {
+  font-size: clamp(2rem, 8vw, 4rem);
+  font-weight: bold;
+  color: #4a9eff;
+  margin-bottom: 1.5rem;
+  letter-spacing: 0.1em;
+}
+
+.camera-stats-large {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-large {
+  font-size: clamp(1.2rem, 5vw, 2.5rem);
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.fps-large {
+  color: #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+  border-color: rgba(0, 255, 136, 0.3);
+}
+
+.frame-id-large {
+  color: #4a9eff;
+  background: rgba(74, 158, 255, 0.1);
+  border-color: rgba(74, 158, 255, 0.3);
+}
+
+.frames-saved-large {
+  color: #ff9500;
+  background: rgba(255, 149, 0, 0.1);
+  border-color: rgba(255, 149, 0, 0.3);
+}
+
+.camera-status-large {
+  font-size: clamp(1.5rem, 6vw, 3rem);
+  font-weight: bold;
+  color: #ff6666;
+  background: rgba(255, 102, 102, 0.1);
+  padding: 1rem 2rem;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 102, 102, 0.3);
+}
+
+.header-only-indicator {
+  font-size: clamp(0.9rem, 3vw, 1.2rem);
+  color: #888;
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  background: rgba(136, 136, 136, 0.1);
+  border-radius: 6px;
+  border: 1px solid rgba(136, 136, 136, 0.2);
+  font-style: italic;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .camera-info-maximized {
+    padding: 1rem;
+  }
+  
+  .camera-stats-large {
+    gap: 0.75rem;
+  }
+  
+  .stat-large {
+    padding: 0.4rem 0.8rem;
+  }
+}
+
+@media (max-height: 600px) {
+  .camera-name-large {
+    margin-bottom: 1rem;
+  }
+  
+  .camera-stats-large {
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
 }
 </style>
