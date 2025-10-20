@@ -25,14 +25,13 @@
     <!-- Maximized overlay for header-only mode -->
     <div class="camera-overlay-maximized" v-if="isHeaderOnlyMode">
       <div class="camera-info-maximized">
-        <div class="camera-name-large">cam{{ camera.globalId }}</div>
-        <div class="camera-stats-large" v-if="streaming">
+        <div class="camera-stats-grid" v-if="streaming">
+          <div class="stat-large camera-name-large">cam{{ camera.globalId }}</div>
           <div class="stat-large fps-large">{{ camera.fps }} FPS</div>
-          <div class="stat-large frame-id-large">Frame {{ latestFrameId }}</div>
-          <div class="stat-large frames-saved-large">Saved {{ camera.framesSaved }}</div>
+          <div class="stat-large frame-id-large">{{ latestFrameId }}</div>
+          <div class="stat-large frames-saved-large">{{ camera.framesSaved }}</div>
         </div>
         <div class="camera-status-large" v-else>No Signal</div>
-        <div class="header-only-indicator">Header Only Mode</div>
       </div>
     </div>
   </div>
@@ -238,6 +237,7 @@ watch(streaming, (isStreaming) => {
   background: #1a1a1a;
   border: 1px solid #333;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .camera-view.no-signal {
@@ -326,11 +326,15 @@ watch(streaming, (isStreaming) => {
 }
 
 .camera-info-maximized {
-  text-align: center;
+  width: 100%;
+  height: 100%;
+  padding: clamp(0.5rem, 2cqw, 2rem);
   color: white;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
   text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-  transform: scale(1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   animation: fadeIn 0.3s ease-in-out;
 }
 
@@ -345,93 +349,136 @@ watch(streaming, (isStreaming) => {
   }
 }
 
-.camera-name-large {
-  font-size: clamp(2rem, 8vw, 4rem);
-  font-weight: bold;
-  color: #4a9eff;
-  margin-bottom: 1.5rem;
-  letter-spacing: 0.1em;
+.camera-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: clamp(0.3rem, calc(1cqw + 1cqh), 2rem);
+  width: 90%;
+  height: 90%;
 }
 
-.camera-stats-large {
+.camera-name-large {
+  font-size: clamp(0.8rem, calc(3cqw + 3cqh), 4rem);
+  font-weight: bold;
+  color: #4a9eff;
+  letter-spacing: 0.05em;
+  background: rgba(74, 158, 255, 0.15);
+  border-color: rgba(74, 158, 255, 0.4);
   display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  align-items: center;
+  justify-content: center;
 }
 
 .stat-large {
-  font-size: clamp(1.2rem, 5vw, 2.5rem);
+  font-size: clamp(0.6rem, calc(2cqw + 2cqh), 3rem);
   font-weight: 600;
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
+  padding: clamp(0.5rem, calc(1cqw + 1cqh), 2rem);
+  border-radius: clamp(6px, calc(0.75cqw + 0.75cqh), 16px);
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  transition: all 0.2s ease;
 }
 
 .fps-large {
   color: #00ff88;
-  background: rgba(0, 255, 136, 0.1);
-  border-color: rgba(0, 255, 136, 0.3);
+  background: rgba(0, 255, 136, 0.15);
+  border-color: rgba(0, 255, 136, 0.4);
 }
 
 .frame-id-large {
   color: #4a9eff;
-  background: rgba(74, 158, 255, 0.1);
-  border-color: rgba(74, 158, 255, 0.3);
+  background: rgba(74, 158, 255, 0.15);
+  border-color: rgba(74, 158, 255, 0.4);
+  font-size: clamp(1rem, calc(3cqw + 3cqh), 4.5rem);
 }
 
 .frames-saved-large {
   color: #ff9500;
-  background: rgba(255, 149, 0, 0.1);
-  border-color: rgba(255, 149, 0, 0.3);
+  background: rgba(255, 149, 0, 0.15);
+  border-color: rgba(255, 149, 0, 0.4);
+  font-size: clamp(1rem, calc(3cqw + 3cqh), 4.5rem);
 }
 
 .camera-status-large {
-  font-size: clamp(1.5rem, 6vw, 3rem);
+  font-size: clamp(0.7rem, 5cqw, 3rem);
   font-weight: bold;
   color: #ff6666;
-  background: rgba(255, 102, 102, 0.1);
-  padding: 1rem 2rem;
-  border-radius: 12px;
-  border: 2px solid rgba(255, 102, 102, 0.3);
+  background: rgba(255, 102, 102, 0.15);
+  padding: clamp(0.4rem, 2cqw, 1rem) clamp(0.6rem, 4cqw, 2rem);
+  border-radius: clamp(6px, 2cqw, 12px);
+  border: 2px solid rgba(255, 102, 102, 0.4);
 }
 
-.header-only-indicator {
-  font-size: clamp(0.9rem, 3vw, 1.2rem);
-  color: #888;
-  margin-top: 1rem;
-  padding: 0.5rem 1rem;
-  background: rgba(136, 136, 136, 0.1);
-  border-radius: 6px;
-  border: 1px solid rgba(136, 136, 136, 0.2);
-  font-style: italic;
+/* Container queries for responsive design based on camera view size */
+@container (max-width: 400px) {
+  .camera-stats-grid {
+    gap: clamp(0.2rem, calc(0.8cqw + 0.8cqh), 1rem);
+  }
+
+  .camera-name-large {
+    font-size: clamp(0.5rem, calc(2cqw + 2cqh), 2rem);
+  }
+
+  .stat-large {
+    font-size: clamp(0.4rem, calc(1.5cqw + 1.5cqh), 1.5rem);
+    padding: clamp(0.3rem, calc(0.8cqw + 0.8cqh), 1rem);
+  }
+
+  .frame-id-large,
+  .frames-saved-large {
+    font-size: clamp(0.6rem, calc(2cqw + 2cqh), 2.5rem);
+  }
 }
 
-/* Responsive adjustments */
+@container (max-width: 250px) {
+  .camera-stats-grid {
+    gap: clamp(0.15rem, calc(0.5cqw + 0.5cqh), 0.6rem);
+  }
+
+  .camera-name-large {
+    font-size: clamp(0.4rem, calc(2.5cqw + 2.5cqh), 4rem);
+  }
+
+  .stat-large {
+    font-size: clamp(0.35rem, calc(2cqw + 2cqh), 3rem);
+    padding: clamp(0.2rem, calc(0.5cqw + 0.5cqh), 0.6rem);
+  }
+
+  .frame-id-large,
+  .frames-saved-large {
+    font-size: clamp(0.5rem, calc(2.5cqw + 2.5cqh), 4rem);
+  }
+}
+
+/* Fallback media queries for browsers without container query support */
 @media (max-width: 768px) {
   .camera-info-maximized {
-    padding: 1rem;
+    padding: clamp(0.3rem, 2vw, 1rem);
   }
-  
-  .camera-stats-large {
-    gap: 0.75rem;
+
+  .camera-stats-grid {
+    gap: clamp(0.4rem, 1.5vw, 1rem);
   }
-  
+
   .stat-large {
-    padding: 0.4rem 0.8rem;
+    font-size: clamp(0.5rem, 3vw, 1.5rem);
+    padding: clamp(0.3rem, 1.5vw, 0.8rem);
   }
 }
 
 @media (max-height: 600px) {
-  .camera-name-large {
-    margin-bottom: 1rem;
+  .camera-stats-grid {
+    gap: clamp(0.3rem, 1.5vh, 0.8rem);
   }
-  
-  .camera-stats-large {
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+
+  .stat-large {
+    font-size: clamp(0.5rem, 2.5vh, 1.2rem);
   }
 }
 </style>
