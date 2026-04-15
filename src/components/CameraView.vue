@@ -144,6 +144,8 @@ function setupFrameListener() {
         height: data.height,
         bytesPerLine: data.bytesPerLine,
         frameId: data.frameId,
+        awbGainR: data.awbGainR ?? 1.0,
+        awbGainB: data.awbGainB ?? 1.0,
         timestamp: now
       })
       
@@ -175,6 +177,7 @@ function renderLoop() {
     lastFrameTime = frame.timestamp
     
     try {
+      debayer.setFrameAWBGains(frame.awbGainR, frame.awbGainB)
       debayer.processFrame(
         frame.data,
         frame.width,

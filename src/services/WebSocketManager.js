@@ -180,8 +180,8 @@ export class WebSocketManager extends EventEmitter {
 
   handleChunkStart(data) {
     // Updated to handle the new ChunkHeader size with frames_saved field
-    if (data.byteLength !== 44) { // ChunkStartMarker (8) + ChunkHeader (36 bytes now)
-      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 44`)
+    if (data.byteLength !== 56) { // ChunkStartMarker (8) + ChunkHeader (48 bytes)
+      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 56`)
       return
     }
 
@@ -202,15 +202,18 @@ export class WebSocketManager extends EventEmitter {
     const bytesPerLine = view.getUint32(28, true)
     const width = view.getUint32(32, true)
     const height = view.getUint32(36, true)
-    const framesSaved = view.getUint32(40, true) // New field
+    const framesSaved = view.getUint32(40, true)
+    const awbGainR = view.getFloat32(44, true)
+    const awbGainB = view.getFloat32(48, true)
+    const awbCct   = view.getFloat32(52, true)
 
     // Check if this is header only mode (totalChunks = 0, totalSize = 0)
     if (totalChunks === 0 && totalSize === 0) {
       this.logger.debug(`Header only frame ${frameId} from camera ${cameraId}`)
-      
+
       // Update frame stats for FPS calculation
       this.updateFrameStats(cameraId)
-      
+
       // Emit header-only frame event with empty data and frames_saved info
       this.emitFrame(
         cameraId,
@@ -219,7 +222,10 @@ export class WebSocketManager extends EventEmitter {
         height,
         bytesPerLine,
         new Uint8Array(0), // Empty data for header only mode
-        framesSaved
+        framesSaved,
+        awbGainR,
+        awbGainB,
+        awbCct
       )
       return
     }
@@ -236,7 +242,10 @@ export class WebSocketManager extends EventEmitter {
         bytesPerLine,
         width,
         height,
-        framesSaved
+        framesSaved,
+        awbGainR,
+        awbGainB,
+        awbCct
       },
       chunks: new Array(totalChunks),
       receivedChunks: 0,
@@ -325,7 +334,10 @@ export class WebSocketManager extends EventEmitter {
         buffer.header.height,
         buffer.header.bytesPerLine,
         frameData,
-        buffer.header.framesSaved
+        buffer.header.framesSaved,
+        buffer.header.awbGainR,
+        buffer.header.awbGainB,
+        buffer.header.awbCct
       )
 
       // Clean up
@@ -408,7 +420,8 @@ export class WebSocketManager extends EventEmitter {
     this.frameStats.set(cameraId, stats)
   }
 
-  emitFrame(cameraId, frameId, width, height, bytesPerLine, data, framesSaved = 0) {
+  emitFrame(cameraId, frameId, width, height, bytesPerLine, data,
+            framesSaved = 0, awbGainR = 1.0, awbGainB = 1.0, awbCct = 0.0) {
     this.emit('frame', {
       serverIndex: this.serverIndex,
       cameraId,
@@ -417,8 +430,11 @@ export class WebSocketManager extends EventEmitter {
       height,
       bytesPerLine,
       data,
-      framesSaved, // Add frames_saved to the frame event
-      isHeaderOnly: data.length === 0 // Mark header-only frames
+      framesSaved,
+      awbGainR,
+      awbGainB,
+      awbCct,
+      isHeaderOnly: data.length === 0
     })
   }
 

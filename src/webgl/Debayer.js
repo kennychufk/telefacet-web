@@ -23,6 +23,8 @@ uniform sampler2D u_texture;
 uniform vec2 u_textureSize;
 uniform float u_bytesPerLine;
 uniform vec3 u_awbGains;
+uniform float u_awbFrameGainR;
+uniform float u_awbFrameGainB;
 varying vec2 v_texCoord;
 
 float unpack10bit(vec2 imageCoord) {
@@ -78,9 +80,16 @@ float unpack10bit(vec2 imageCoord) {
     return value10bit / 1023.0;
 }
 
-// Sample a pixel at given coordinates
+// Sample a pixel at given coordinates, applying per-frame R/B gains at the raw Bayer sample
 float sampleAt(vec2 coord) {
-    return unpack10bit(coord);
+    float value = unpack10bit(coord);
+    vec2 pos = mod(floor(coord), 2.0);
+    if (pos.x < 0.5 && pos.y < 0.5) {
+        value *= u_awbFrameGainR;          // Red pixel
+    } else if (pos.x >= 0.5 && pos.y >= 0.5) {
+        value *= u_awbFrameGainB;          // Blue pixel
+    }
+    return clamp(value, 0.0, 1.0);
 }
 
 void main() {
@@ -163,6 +172,8 @@ export class Debayer {
         this.width = 0
         this.height = 0
         this.awbGains = { r: 1.0, g: 1.0, b: 1.0 }
+        this.frameAwbGainR = 1.0
+        this.frameAwbGainB = 1.0
         
         this.initializeWebGL()
     }
@@ -191,7 +202,9 @@ export class Debayer {
             uTexture: gl.getUniformLocation(this.program, 'u_texture'),
             uTextureSize: gl.getUniformLocation(this.program, 'u_textureSize'),
             uBytesPerLine: gl.getUniformLocation(this.program, 'u_bytesPerLine'),
-            uAwbGains: gl.getUniformLocation(this.program, 'u_awbGains')
+            uAwbGains: gl.getUniformLocation(this.program, 'u_awbGains'),
+            uAwbFrameGainR: gl.getUniformLocation(this.program, 'u_awbFrameGainR'),
+            uAwbFrameGainB: gl.getUniformLocation(this.program, 'u_awbFrameGainB')
         }
         
         // Create vertex buffer
@@ -249,6 +262,11 @@ export class Debayer {
     setAWBGains(gains) {
         this.awbGains = gains
     }
+
+    setFrameAWBGains(gainR, gainB) {
+        this.frameAwbGainR = gainR
+        this.frameAwbGainB = gainB
+    }
     
     processFrame(frameData, width, height, bytesPerLine) {
         const gl = this.gl
@@ -286,6 +304,8 @@ export class Debayer {
         gl.uniform2f(this.locations.uTextureSize, width, height)
         gl.uniform1f(this.locations.uBytesPerLine, bytesPerLine)
         gl.uniform3f(this.locations.uAwbGains, this.awbGains.r, this.awbGains.g, this.awbGains.b)
+        gl.uniform1f(this.locations.uAwbFrameGainR, this.frameAwbGainR)
+        gl.uniform1f(this.locations.uAwbFrameGainB, this.frameAwbGainB)
         
         // Set up vertex attributes
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer)
