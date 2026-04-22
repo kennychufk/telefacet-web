@@ -154,38 +154,10 @@ export class ConfigLoader {
       }
     }
 
-    // Validate AWB gains
-    if (!config.awb_gains) {
-      config.awb_gains = {}
-    }
-
-    // Validate each AWB gain entry
-    Object.entries(config.awb_gains).forEach(([camId, gains]) => {
-      if (!gains.r || !gains.g || !gains.b) {
-        throw new Error(`AWB gains for ${camId} must include r, g, and b values`)
-      }
-
-      // Validate gain ranges (0.5 to 2.5)
-      ['r', 'g', 'b'].forEach(channel => {
-        const value = gains[channel]
-        if (typeof value !== 'number' || value < 0.5 || value > 2.5) {
-          throw new Error(`AWB gain ${camId}.${channel} must be between 0.5 and 2.5`)
-        }
-      })
-    })
+    // awb_gains is silently ignored in protocol v2 (AWB is applied by the ISP)
+    delete config.awb_gains
 
     return config
-  }
-
-  // Get AWB gains for a specific camera
-  getAWBGains(globalCameraId) {
-    const camKey = `cam${globalCameraId}`
-    if (this.config && this.config.awb_gains && this.config.awb_gains[camKey]) {
-      return this.config.awb_gains[camKey]
-    }
-
-    // Return default gains if not specified
-    return { r: 1.0, g: 1.0, b: 1.0 }
   }
 
   // Get server addresses
@@ -242,12 +214,7 @@ export class ConfigLoader {
         checkerboard_full_res_detection: false,
         checkerboard_num_threads: 4
       },
-      awb_gains: {
-        cam0: { r: 1.5, g: 1.0, b: 1.8 },
-        cam1: { r: 1.6, g: 1.0, b: 1.7 },
-        cam2: { r: 1.5, g: 1.0, b: 1.8 },
-        cam3: { r: 1.6, g: 1.0, b: 1.7 }
-      }
+      // awb_gains removed — ISP applies AWB automatically in protocol v2
     }
   }
 }

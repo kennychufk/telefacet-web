@@ -72,8 +72,7 @@ const isHeaderOnlyMode = computed(() => store.headerOnlyMode)
 onMounted(() => {
   if (canvas.value) {
     try {
-      debayer = new Debayer(canvas.value, store.debayerQuality)
-      debayer.setAWBGains(props.camera.awbGains)
+      debayer = new Debayer(canvas.value)
       
       // Set up frame listener
       setupFrameListener()
@@ -144,8 +143,6 @@ function setupFrameListener() {
         height: data.height,
         bytesPerLine: data.bytesPerLine,
         frameId: data.frameId,
-        awbGainR: data.awbGainR ?? 1.0,
-        awbGainB: data.awbGainB ?? 1.0,
         timestamp: now
       })
       
@@ -177,7 +174,6 @@ function renderLoop() {
     lastFrameTime = frame.timestamp
     
     try {
-      debayer.setFrameAWBGains(frame.awbGainR, frame.awbGainB)
       debayer.processFrame(
         frame.data,
         frame.width,

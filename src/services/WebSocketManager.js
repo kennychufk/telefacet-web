@@ -179,74 +179,43 @@ export class WebSocketManager extends EventEmitter {
   }
 
   handleChunkStart(data) {
-    // Updated to handle the new ChunkHeader size with frames_saved field
-    if (data.byteLength !== 56) { // ChunkStartMarker (8) + ChunkHeader (48 bytes)
-      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 56`)
+    // Protocol v2: ChunkStartMarker (8) + ChunkHeader (40) = 48 bytes
+    if (data.byteLength !== 48) {
+      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 48`)
       return
     }
 
     const view = new DataView(data)
     const version = view.getUint32(4, true)
 
-    if (version !== 1) {
-      this.logger.error(`Unsupported chunk version: ${version}`)
+    if (version !== 2) {
+      this.logger.error(`Unsupported chunk version: ${version} (expected 2)`)
       return
     }
 
-    // Parse chunk header (now includes frames_saved)
-    const frameUuid = view.getUint32(8, true)
-    const frameId = view.getUint32(12, true)
-    const cameraId = view.getUint32(16, true)
-    const totalChunks = view.getUint32(20, true)
-    const totalSize = view.getUint32(24, true)
+    const frameUuid    = view.getUint32(8,  true)
+    const frameId      = view.getUint32(12, true)
+    const cameraId     = view.getUint32(16, true)
+    const totalChunks  = view.getUint32(20, true)
+    const totalSize    = view.getUint32(24, true)
     const bytesPerLine = view.getUint32(28, true)
-    const width = view.getUint32(32, true)
-    const height = view.getUint32(36, true)
-    const framesSaved = view.getUint32(40, true)
-    const awbGainR = view.getFloat32(44, true)
-    const awbGainB = view.getFloat32(48, true)
-    const awbCct   = view.getFloat32(52, true)
+    const width        = view.getUint32(32, true)
+    const height       = view.getUint32(36, true)
+    const pixelFormat  = view.getUint32(40, true)  // FourCC (e.g. YUV420)
+    const framesSaved  = view.getUint32(44, true)
 
     // Check if this is header only mode (totalChunks = 0, totalSize = 0)
     if (totalChunks === 0 && totalSize === 0) {
       this.logger.debug(`Header only frame ${frameId} from camera ${cameraId}`)
-
-      // Update frame stats for FPS calculation
       this.updateFrameStats(cameraId)
-
-      // Emit header-only frame event with empty data and frames_saved info
-      this.emitFrame(
-        cameraId,
-        frameId,
-        width,
-        height,
-        bytesPerLine,
-        new Uint8Array(0), // Empty data for header only mode
-        framesSaved,
-        awbGainR,
-        awbGainB,
-        awbCct
-      )
+      this.emitFrame(cameraId, frameId, width, height, bytesPerLine, new Uint8Array(0), pixelFormat, framesSaved)
       return
     }
 
     this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
 
-    // Initialize chunk buffer for this frame
     this.chunkBuffers.set(frameUuid, {
-      header: {
-        frameId,
-        cameraId,
-        totalChunks,
-        totalSize,
-        bytesPerLine,
-        width,
-        height,
-        framesSaved,
-        awbGainR,
-        awbGainB,
-        awbCct
-      },
+      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved },
       chunks: new Array(totalChunks),
       receivedChunks: 0,
       startTime: performance.now()
@@ -324,7 +293,6 @@ export class WebSocketManager extends EventEmitter {
       const assemblyTime = performance.now() - buffer.startTime
       this.logger.debug(`Assembled frame ${buffer.header.frameId} from camera ${buffer.header.cameraId} in ${assemblyTime.toFixed(2)}ms`)
 
-      // Emit complete frame with frames_saved info
       this.stats.chunkedFramesReceived++
       this.updateFrameStats(buffer.header.cameraId)
       this.emitFrame(
@@ -334,10 +302,8 @@ export class WebSocketManager extends EventEmitter {
         buffer.header.height,
         buffer.header.bytesPerLine,
         frameData,
-        buffer.header.framesSaved,
-        buffer.header.awbGainR,
-        buffer.header.awbGainB,
-        buffer.header.awbCct
+        buffer.header.pixelFormat,
+        buffer.header.framesSaved
       )
 
       // Clean up
@@ -421,7 +387,7 @@ export class WebSocketManager extends EventEmitter {
   }
 
   emitFrame(cameraId, frameId, width, height, bytesPerLine, data,
-            framesSaved = 0, awbGainR = 1.0, awbGainB = 1.0, awbCct = 0.0) {
+            pixelFormat = 0, framesSaved = 0) {
     this.emit('frame', {
       serverIndex: this.serverIndex,
       cameraId,
@@ -430,10 +396,8 @@ export class WebSocketManager extends EventEmitter {
       height,
       bytesPerLine,
       data,
+      pixelFormat,
       framesSaved,
-      awbGainR,
-      awbGainB,
-      awbCct,
       isHeaderOnly: data.length === 0
     })
   }

@@ -14,7 +14,7 @@ export const useCameraStore = defineStore('camera', {
     servers: [], // Array of { index, address, connected, cameras }
 
     // Camera management
-    cameras: [], // Array of { globalId, serverIndex, localId, streaming, fps, framesSaved, awbGains }
+    cameras: [], // Array of { globalId, serverIndex, localId, streaming, fps, framesSaved }
     totalCameras: 0,
 
     // System state
@@ -135,7 +135,7 @@ export const useCameraStore = defineStore('camera', {
         this.updateCameraList()
       })
 
-      manager.on('camera-map-updated', (cameraMap) => {
+      manager.on('camera-map-updated', () => {
         this.updateCameraList()
       })
 
@@ -181,19 +181,14 @@ export const useCameraStore = defineStore('camera', {
     updateCameraList() {
       const cameraMap = this.serverManager.globalCameraMap
 
-      this.cameras = Array.from(cameraMap.entries()).map(([globalId, info]) => {
-        const awbGains = configLoader.getAWBGains(globalId)
-
-        return {
-          globalId,
-          serverIndex: info.serverIndex,
-          localId: info.localCameraId,
-          streaming: false,
-          fps: 0,
-          framesSaved: 0, // Initialize frames saved counter
-          awbGains
-        }
-      })
+      this.cameras = Array.from(cameraMap.entries()).map(([globalId, info]) => ({
+        globalId,
+        serverIndex: info.serverIndex,
+        localId: info.localCameraId,
+        streaming: false,
+        fps: 0,
+        framesSaved: 0
+      }))
 
       this.totalCameras = this.cameras.length
     },
