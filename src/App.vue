@@ -1,101 +1,124 @@
 <!-- src/App.vue -->
 <template>
   <div class="app">
-    <div class="app-layout">
-      <ControlPanel />
-      <CameraGrid />
-    </div>
+    <ControlPanel />
+
+    <PanelToggle
+      :open="store.showControlPanel"
+      :panel-width="210"
+      @toggle="store.toggleControlPanel"
+    />
+
+    <main class="main">
+      <CameraGrid v-if="appState === 'streaming'" />
+      <div v-else class="empty-state">
+        <div class="status-line">{{ statusMessage }}</div>
+        <div v-if="appState === 'connected'" class="discovery-line">
+          {{ store.totalCameras }} {{ store.totalCameras === 1 ? 'camera' : 'cameras' }} discovered
+        </div>
+      </div>
+    </main>
+
     <DebugPanel :showDebug="showDebugPanel" @close="showDebugPanel = false" />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useCameraStore } from './stores/cameraStore'
 import ControlPanel from './components/ControlPanel.vue'
 import CameraGrid from './components/CameraGrid.vue'
 import DebugPanel from './components/DebugPanel.vue'
+import PanelToggle from './components/PanelToggle.vue'
 
 const store = useCameraStore()
 const showDebugPanel = ref(false)
 
-// Handle keyboard shortcuts
-function handleKeyPress(event) {
-  // Toggle control panel with 'P' key
-  if (event.key === 'p' || event.key === 'P') {
+const appState = computed(() => {
+  if (!store.configLoaded || !store.hasConnectedServers) return null
+  if (!store.camerasConfigured) return 'connected'
+  if (!store.camerasRunning) return 'configured'
+  if (store.streamingCameras.length === 0) return 'running'
+  return 'streaming'
+})
+
+const statusMessage = computed(() => {
+  switch (appState.value) {
+    case 'connected':  return 'READY — CONFIGURE CAMERAS'
+    case 'configured': return 'CONFIGURED — START CAMERAS'
+    case 'running':    return 'RUNNING — PRESS STREAM'
+    default:           return 'LOAD CONFIG TO BEGIN'
+  }
+})
+
+async function handleKeyPress(event) {
+  if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return
+
+  const k = event.key.toLowerCase()
+  if (k === 'p') {
     store.toggleControlPanel()
-  }
-  
-  // Toggle debayer quality with 'Q' key
-  if (event.key === 'q' || event.key === 'Q') {
-    const qualities = ['quality']
-    const currentIndex = qualities.indexOf(store.debayerQuality)
-    const nextIndex = (currentIndex + 1) % qualities.length
-    store.setDebayerQuality(qualities[nextIndex])
-  }
-  
-  // Toggle debug panel with 'D' key
-  if (event.key === 'd' || event.key === 'D') {
+  } else if (k === 'h') {
+    if (!store.hasConnectedServers) return
+    const next = !store.headerOnlyMode
+    store.headerOnlyMode = next
+    await store.setHeaderOnlyMode(next)
+  } else if (k === 'r') {
+    if (store.hasConnectedServers) await store.resetFrameCounts()
+  } else if (k === 'd') {
     showDebugPanel.value = !showDebugPanel.value
   }
 }
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyPress)
-  
-  // Log initial setup
-  console.log('Camera WebSocket Client Started')
-  console.log('Keyboard shortcuts:')
-  console.log('  P - Toggle control panel')
-  console.log('  Q - Toggle debayer quality')
-  console.log('  D - Toggle debug panel')
+  console.log('telefacet — ready')
+  console.log('Shortcuts:  P · panel   H · header only   R · reset counts   D · debug')
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyPress)
-  
-  // Clean up connections
-  if (store.serverManager) {
-    console.log('Cleaning up connections...')
-    store.serverManager.disconnectAll()
-  }
+  if (store.serverManager) store.serverManager.disconnectAll()
 })
 </script>
 
-<style>
-/* Global styles */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html, body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-}
-
-#app {
-  width: 100%;
-  height: 100%;
-}
-</style>
-
 <style scoped>
 .app {
-  width: 100%;
+  width: 100vw;
   height: 100vh;
-  background: #0a0a0a;
-  color: #ddd;
   display: flex;
-  flex-direction: column;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.app-layout {
+.main {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.status-line {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-sec);
+  letter-spacing: 0.1em;
+}
+
+.discovery-line {
+  font-size: 10px;
+  color: var(--line);
+  font-family: var(--font-mono);
 }
 </style>
