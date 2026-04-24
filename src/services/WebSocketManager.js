@@ -465,6 +465,11 @@ export class WebSocketManager extends EventEmitter {
     })
   }
 
+  unconfigure() {
+    this.logger.info('Unconfiguring cameras (CONFIGURED → IDLE)')
+    return this.send({ cmd: 'unconfigure' })
+  }
+
   setSaveMode(mode, params = {}) {
     this.logger.info(`Setting save mode to ${mode}`)
     return this.send({
@@ -647,6 +652,15 @@ export class MultiServerManager extends EventEmitter {
     for (const server of this.servers.values()) {
       if (server.connected) {
         server.configureCameras(config)
+      }
+    }
+  }
+
+  unconfigureAll() {
+    this.logger.info('Unconfiguring all servers')
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.unconfigure()
       }
     }
   }
