@@ -28,8 +28,15 @@ const TEST_CONFIG = {
  * Pull frames from the manager until one satisfies `predicate`, or fail.
  * Used right after a mode-switch — frames already in flight may still
  * reflect the old mode, so we skip them.
+ *
+ * Defaults are very generous (60s / 500 frames) because over a real
+ * LAN the server can land in a backpressure-recovery cycle after a
+ * mid-stream mode switch — the chunked-transfer rate controller caps at
+ * ~1000 chunks/sec (≈5 fps for 6 MB IMX519 frames) and the in-flight
+ * data frame may need to drain before the new mode takes effect. On
+ * loopback this all happens in milliseconds.
  */
-async function nextFrameMatching(mgr, predicate, { timeoutMs = 5000, maxFrames = 30 } = {}) {
+async function nextFrameMatching(mgr, predicate, { timeoutMs = 60000, maxFrames = 500 } = {}) {
   return new Promise((resolve, reject) => {
     let seen = 0
     const t = setTimeout(() => {
@@ -59,6 +66,12 @@ describe('State-machine edges', () => {
   beforeEach(async () => {
     mgr = new WebSocketManager(WS_URL, 0)
     disableReconnect(mgr)
+    // Swallow WebSocket error events: WebSocketManager extends EventEmitter,
+    // and Node throws ERR_UNHANDLED_ERROR if an 'error' event has no
+    // listener. On a flaky LAN the WS may emit 'error' during teardown
+    // after a timeout, which would otherwise crash the whole test file
+    // and cascade-fail every subsequent test.
+    mgr.on('error', () => {})
     const connected = waitForEvent(mgr, 'connected', 5000)
     mgr.connect()
     await connected
@@ -191,26 +204,27 @@ describe('State-machine edges', () => {
     const first = await nextFrameMatching(
       mgr,
       (f) => f.cameraId === cameraId && !f.isHeaderOnly,
-      { timeoutMs: 5000 },
     )
     expect(first.data.length).toBeGreaterThan(0)
 
-    // Switch to header-only.
+    // Switch to header-only. Status timeout is generous: mid-stream the
+    // WS is saturated with frame data and text responses queue behind it
+    // on a real LAN.
     mgr.setHeaderOnlyMode(true)
-    await waitForEvent(mgr, 'status', 5000)
-    const ho = await nextFrameMatching(mgr, (f) => f.isHeaderOnly, { timeoutMs: 5000 })
+    await waitForEvent(mgr, 'status', 15000)
+    const ho = await nextFrameMatching(mgr, (f) => f.isHeaderOnly)
     expect(ho.data.length).toBe(0)
 
     // Switch back.
     mgr.setHeaderOnlyMode(false)
-    await waitForEvent(mgr, 'status', 5000)
-    const back = await nextFrameMatching(mgr, (f) => !f.isHeaderOnly, { timeoutMs: 5000 })
+    await waitForEvent(mgr, 'status', 15000)
+    const back = await nextFrameMatching(mgr, (f) => !f.isHeaderOnly)
     expect(back.data.length).toBeGreaterThan(0)
 
-    const stopAll = waitForEvent(mgr, 'status', 10000)
+    const stopAll = waitForEvent(mgr, 'status', 30000)
     mgr.stopCameras()
     await stopAll
-  }, 30000)
+  }, 180000)
 
   it('reset_frame_counts mid-stream rolls frame_id back without disrupting flow', async () => {
     const disc = await new Promise((resolve) => {
@@ -226,26 +240,28 @@ describe('State-machine edges', () => {
     mgr.startStream(cameraId)
     await waitForEvent(mgr, 'status', 5000)
 
-    // Advance the counter.
-    const before = await collectFrames(mgr, 8, 8000)
+    // Advance the counter. Generous timeout: the chunked-transfer rate
+    // controller caps at ~5 fps for 6 MB IMX519 frames over a real LAN.
+    const before = await collectFrames(mgr, 8, 30000)
     const preResetId = before[before.length - 1].frameId
     expect(preResetId).toBeGreaterThanOrEqual(1)
 
     mgr.resetFrameCounts()
-    await waitForEvent(mgr, 'status', 5000)
+    await waitForEvent(mgr, 'status', 30000)
 
     // Next freshly-captured frame should have a much smaller frameId.
+    // Generous bounds: on a real LAN the server's TCP send buffer holds
+    // many old-counter frames captured before the reset took effect.
     const post = await nextFrameMatching(
       mgr,
       (f) => f.cameraId === cameraId && f.frameId < preResetId,
-      { timeoutMs: 5000, maxFrames: 30 },
     )
     expect(post.frameId).toBeLessThan(preResetId)
 
-    const stopAll = waitForEvent(mgr, 'status', 10000)
+    const stopAll = waitForEvent(mgr, 'status', 30000)
     mgr.stopCameras()
     await stopAll
-  }, 30000)
+  }, 180000)
 
   it('allows discover during RUNNING', async () => {
     const initialDisc = await new Promise((resolve) => {
@@ -258,16 +274,17 @@ describe('State-machine edges', () => {
     mgr.startCameras()
     await waitForEvent(mgr, 'status', 5000)
 
-    // Discover while RUNNING — must succeed.
-    const discP = waitForEvent(mgr, 'cameras-discovered', 5000)
+    // Discover while RUNNING — must succeed. Generous timeout: the text
+    // response queues behind active binary frame chunks on a real LAN.
+    const discP = waitForEvent(mgr, 'cameras-discovered', 30000)
     mgr.discoverCameras()
     const disc = await discP
     expect(disc.cameras.length).toBe(initialDisc.cameras.length)
 
-    const stopAll = waitForEvent(mgr, 'status', 10000)
+    const stopAll = waitForEvent(mgr, 'status', 30000)
     mgr.stopCameras()
     await stopAll
-  }, 20000)
+  }, 90000)
 
   // --- many-cycle reliability ----------------------------------------------
 
