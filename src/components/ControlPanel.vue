@@ -104,7 +104,7 @@
         </section>
 
         <!-- Mode -->
-        <section v-if="store.hasConnectedServers" class="section last">
+        <section v-if="store.hasConnectedServers" class="section">
           <div class="section-label">Mode</div>
           <div class="toggle-row">
             <span class="toggle-label">Header only</span>
@@ -116,6 +116,12 @@
               <span class="thumb" :class="{ on: store.headerOnlyMode }" />
             </button>
           </div>
+        </section>
+
+        <!-- Focus -->
+        <section v-if="store.hasConnectedServers" class="section last">
+          <div class="section-label">Focus</div>
+          <FocusSection :disabled="!store.camerasConfigured" />
         </section>
 
         <!-- Error -->
@@ -141,6 +147,7 @@ import { useCameraStore } from '../stores/cameraStore'
 import IconBtn from './IconBtn.vue'
 import LiveDot from './LiveDot.vue'
 import Pipeline from './Pipeline.vue'
+import FocusSection from './FocusSection.vue'
 
 const store = useCameraStore()
 const fileInput = ref(null)

@@ -428,11 +428,16 @@ export class WebSocketManager extends EventEmitter {
     }
   }
 
-  // Add new method to set header only mode
   setHeaderOnlyMode(enabled) {
     this.headerOnlyMode = enabled
     this.logger.info(`Setting header only mode to ${enabled}`)
     return this.send({ cmd: 'set_header_only', enabled: enabled })
+  }
+
+  // lens_position < 0 → continuous AF; >= 0 → manual at that dioptre value
+  setLensPosition(lensPosition) {
+    this.logger.info(`Setting lens position to ${lensPosition}`)
+    return this.send({ cmd: 'set_lens_position', lens_position: lensPosition })
   }
 
   handleReconnect() {
@@ -693,6 +698,15 @@ export class MultiServerManager extends EventEmitter {
     for (const server of this.servers.values()) {
       if (server.connected) {
         server.setHeaderOnlyMode(enabled)
+      }
+    }
+  }
+
+  setLensPositionAll(lensPosition) {
+    this.logger.info(`Setting lens position to ${lensPosition} on all servers`)
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.setLensPosition(lensPosition)
       }
     }
   }

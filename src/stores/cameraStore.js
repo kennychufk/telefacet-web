@@ -25,7 +25,9 @@ export const useCameraStore = defineStore('camera', {
     // UI state
     debayerQuality: 'quality', // 'quality'
     showControlPanel: true,
-    headerOnlyMode: false, // New state for header only mode
+    headerOnlyMode: false,
+    focusMode: 'auto',      // 'auto' | 'manual'
+    lensPosition: 0.0,
 
     // Error handling
     lastError: null
@@ -371,12 +373,34 @@ export const useCameraStore = defineStore('camera', {
       }
 
       try {
-        // Send the header only command to all servers
         this.serverManager.setHeaderOnlyModeAll(enabled)
         console.log(`✅ Header only mode ${enabled ? 'enabled' : 'disabled'}`)
         return true
       } catch (error) {
         this.lastError = 'Failed to set header only mode'
+        console.error(error)
+        return false
+      }
+    },
+
+    // lensPosition < 0 engages continuous AF; >= 0 sets manual focus at that dioptre value
+    async setLensPosition(lensPosition) {
+      if (!this.hasConnectedServers) {
+        this.lastError = 'No connected servers'
+        return false
+      }
+
+      try {
+        this.serverManager.setLensPositionAll(lensPosition)
+        if (lensPosition < 0) {
+          this.focusMode = 'auto'
+        } else {
+          this.focusMode = 'manual'
+          this.lensPosition = lensPosition
+        }
+        return true
+      } catch (error) {
+        this.lastError = 'Failed to set lens position'
         console.error(error)
         return false
       }
