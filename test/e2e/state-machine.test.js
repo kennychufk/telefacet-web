@@ -72,10 +72,13 @@ describe('State-machine edges', () => {
     // after a timeout, which would otherwise crash the whole test file
     // and cascade-fail every subsequent test.
     mgr.on('error', () => {})
-    const connected = waitForEvent(mgr, 'connected', 5000)
+    // Generous connect timeout: if the previous test left the server
+    // draining a backed-up send queue, the single-client slot may take a
+    // few seconds to free up.
+    const connected = waitForEvent(mgr, 'connected', 15000)
     mgr.connect()
     await connected
-    await waitForEvent(mgr, 'cameras-discovered', 5000)
+    await waitForEvent(mgr, 'cameras-discovered', 10000)
   })
 
   afterEach(async () => {
@@ -85,7 +88,9 @@ describe('State-machine edges', () => {
       mgr.stopCameras()
       mgr.unconfigure()
       mgr.setSaveMode('none')
-      await new Promise((r) => setTimeout(r, 500))
+      // Give the server a moment to process the teardown commands and
+      // drain any in-flight binary chunks before we close the socket.
+      await new Promise((r) => setTimeout(r, 1500))
     } catch (_) { /* ignore */ }
     mgr.disconnect()
   })
@@ -158,31 +163,37 @@ describe('State-machine edges', () => {
     // commands can land while the streaming thread is mid-send and trip a
     // uWS cork race on the server (observed under Node — Python's tests have
     // enough per-call latency that they don't hit it). The contract under
-    // test (silent re-success) is unchanged either way.
-    await waitForEvent(mgr, 'frame', 5000)
+    // test (silent re-success) is unchanged either way. Generous frame
+    // timeout: first frame can take >5s over a real LAN as libcamera warms
+    // up and the chunked transfer drains.
+    await waitForEvent(mgr, 'frame', 15000)
 
-    // Second start_stream — must also be status (no error).
-    const ss2 = waitForEvent(mgr, 'status', 5000)
+    // Second start_stream — must also be status (no error). Very generous
+    // timeout: while RUNNING, status text responses can queue behind tens
+    // of MB of in-flight binary chunks on a real LAN.
+    const ss2 = waitForEvent(mgr, 'status', 60000)
     mgr.startStream(cameraId)
     await ss2
 
     // Frames still flow.
-    const frame = await waitForEvent(mgr, 'frame', 5000)
+    const frame = await waitForEvent(mgr, 'frame', 15000)
     expect(frame.cameraId).toBe(cameraId)
 
     // Single stop_stream halts the (single) logical stream; second stop_stream errors.
-    const stop1 = waitForEvent(mgr, 'status', 5000)
+    const stop1 = waitForEvent(mgr, 'status', 60000)
     mgr.stopStream(cameraId)
     await stop1
 
-    const stop2err = waitForEvent(mgr, 'server-error', 3000)
+    // Generous timeout: error response queues behind buffered binary
+    // chunks that were in-flight when the first stop_stream landed.
+    const stop2err = waitForEvent(mgr, 'server-error', 30000)
     mgr.stopStream(cameraId)
     await stop2err
 
-    const stopAll = waitForEvent(mgr, 'status', 10000)
+    const stopAll = waitForEvent(mgr, 'status', 30000)
     mgr.stopCameras()
     await stopAll
-  }, 25000)
+  }, 240000)
 
   // --- mid-stream control commands ----------------------------------------
 
@@ -207,17 +218,17 @@ describe('State-machine edges', () => {
     )
     expect(first.data.length).toBeGreaterThan(0)
 
-    // Switch to header-only. Status timeout is generous: mid-stream the
-    // WS is saturated with frame data and text responses queue behind it
-    // on a real LAN.
+    // Switch to header-only. Very generous timeout: mid-stream the WS is
+    // saturated with frame data and the status text response can queue
+    // behind tens of MB of in-flight binary chunks on a real LAN.
     mgr.setHeaderOnlyMode(true)
-    await waitForEvent(mgr, 'status', 15000)
+    await waitForEvent(mgr, 'status', 60000)
     const ho = await nextFrameMatching(mgr, (f) => f.isHeaderOnly)
     expect(ho.data.length).toBe(0)
 
     // Switch back.
     mgr.setHeaderOnlyMode(false)
-    await waitForEvent(mgr, 'status', 15000)
+    await waitForEvent(mgr, 'status', 60000)
     const back = await nextFrameMatching(mgr, (f) => !f.isHeaderOnly)
     expect(back.data.length).toBeGreaterThan(0)
 
@@ -247,7 +258,10 @@ describe('State-machine edges', () => {
     expect(preResetId).toBeGreaterThanOrEqual(1)
 
     mgr.resetFrameCounts()
-    await waitForEvent(mgr, 'status', 30000)
+    // Very generous timeout: under heavy chunked-binary streaming the
+    // status text reply can sit behind several seconds of queued binary
+    // (uWS buffers up to ~8 MB plus our deferred-send cap).
+    await waitForEvent(mgr, 'status', 60000)
 
     // Next freshly-captured frame should have a much smaller frameId.
     // Generous bounds: on a real LAN the server's TCP send buffer holds
@@ -276,7 +290,8 @@ describe('State-machine edges', () => {
 
     // Discover while RUNNING — must succeed. Generous timeout: the text
     // response queues behind active binary frame chunks on a real LAN.
-    const discP = waitForEvent(mgr, 'cameras-discovered', 30000)
+    // Very generous timeout: same reasoning as resetFrameCounts above.
+    const discP = waitForEvent(mgr, 'cameras-discovered', 60000)
     mgr.discoverCameras()
     const disc = await discP
     expect(disc.cameras.length).toBe(initialDisc.cameras.length)

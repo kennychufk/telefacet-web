@@ -227,23 +227,25 @@ describe('Disconnect handling', () => {
     a.startStream(cameraId)
     await waitForEvent(a, 'status', 5000)
 
-    // Confirm streaming is live before the drop.
-    await waitForEvent(a, 'frame', 5000)
+    // Confirm streaming is live before the drop. First frame can take a
+    // moment as libcamera warms up; on a real LAN the chunked transfer is
+    // also ~1s per 6 MB IMX519 frame.
+    await waitForEvent(a, 'frame', 30000)
     abruptClose(a)
 
-    const b = await trackedRetryConnect(5000)
+    const b = await trackedRetryConnect(10000)
     try {
       // Still RUNNING → configure is rejected.
-      const errP = waitForEvent(b, 'server-error', 3000)
+      const errP = waitForEvent(b, 'server-error', 5000)
       b.configureCameras(TEST_CONFIG)
       await errP
 
       // streaming_cameras was cleared on disconnect; re-issue start_stream.
-      const ssP = waitForEvent(b, 'status', 5000)
+      const ssP = waitForEvent(b, 'status', 15000)
       b.startStream(cameraId)
       await ssP
 
-      const frame = await waitForEvent(b, 'frame', 5000)
+      const frame = await waitForEvent(b, 'frame', 15000)
       expect(frame.cameraId).toBe(cameraId)
 
       // stop_cameras succeeds → confirms we were in RUNNING.
@@ -251,18 +253,18 @@ describe('Disconnect handling', () => {
         b,
         'status',
         (p) => typeof p.data?.frames_saved === 'number',
-        10000,
+        30000,
       )
       b.stopCameras()
       await stopP
 
-      const unconfP = waitForEvent(b, 'status', 5000)
+      const unconfP = waitForEvent(b, 'status', 15000)
       b.unconfigure()
       await unconfP
     } finally {
       b.disconnect()
     }
-  }, 25000)
+  }, 90000)
 
   it('keeps the BATCH frame saver running during a disconnect window', async () => {
     const a = await trackedConnect()

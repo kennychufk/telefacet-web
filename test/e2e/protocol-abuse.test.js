@@ -76,11 +76,17 @@ describe('Protocol abuse', () => {
   beforeEach(async () => {
     mgr = new WebSocketManager(WS_URL, 0)
     disableReconnect(mgr)
-    const connected = waitForEvent(mgr, 'connected', 5000)
+    // Swallow WS errors so a transient teardown failure can't surface as
+    // Node ERR_UNHANDLED_ERROR and cascade-fail the rest of the file.
+    mgr.on('error', () => {})
+    // Generous connect timeout: if a previous test left the server
+    // draining a backed-up send queue, the single-client slot may take a
+    // few seconds to free up.
+    const connected = waitForEvent(mgr, 'connected', 15000)
     mgr.connect()
     await connected
     // Drain the auto-discovery that fires on connect.
-    await waitForEvent(mgr, 'cameras-discovered', 5000)
+    await waitForEvent(mgr, 'cameras-discovered', 10000)
   })
 
   afterEach(async () => {
@@ -90,7 +96,9 @@ describe('Protocol abuse', () => {
       mgr.stopCameras()
       mgr.unconfigure()
       mgr.setSaveMode('none')
-      await new Promise((r) => setTimeout(r, 500))
+      // Give the server time to process teardown commands and drain any
+      // in-flight binary chunks before closing the socket.
+      await new Promise((r) => setTimeout(r, 1500))
     } catch (_) { /* ignore */ }
     mgr.disconnect()
   })

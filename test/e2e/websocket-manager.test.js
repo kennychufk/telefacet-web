@@ -30,6 +30,9 @@ describe('WebSocketManager against live server', () => {
 
   beforeEach(() => {
     mgr = new WebSocketManager(WS_URL, 0)
+    // Swallow WS errors so a transient teardown failure can't surface as
+    // Node ERR_UNHANDLED_ERROR and cascade-fail the rest of the file.
+    mgr.on('error', () => {})
   })
 
   afterEach(async () => {
@@ -48,9 +51,10 @@ describe('WebSocketManager against live server', () => {
         mgr.stopCameras()
         mgr.unconfigure()
         mgr.setSaveMode('none')
-        // Give libcamera time to release the sensor pipeline before the
-        // next test re-acquires it (matches the Python conftest).
-        await new Promise((r) => setTimeout(r, 500))
+        // Give libcamera time to release the sensor pipeline (and the
+        // server time to drain any in-flight binary chunks) before the
+        // next test re-acquires the slot.
+        await new Promise((r) => setTimeout(r, 1500))
       }
     } catch (_) {
       // ignore
@@ -169,7 +173,9 @@ describe('WebSocketManager against live server', () => {
     mgr.startStream(cameraId)
     await waitForEvent(mgr, 'status', 5000)
 
-    const frames = await collectFrames(mgr, 15, 15000)
+    // Generous timeout: the chunked-transfer rate controller caps at
+    // ~5 fps for 6 MB IMX519 frames over a real LAN.
+    const frames = await collectFrames(mgr, 15, 30000)
     const savedCounts = frames.map((f) => f.framesSaved)
     // Monotonic non-decreasing — same invariant as the Python suite.
     for (let i = 1; i < savedCounts.length; i++) {
@@ -178,17 +184,20 @@ describe('WebSocketManager against live server', () => {
 
     // `stop_cameras` carries a cumulative `frames_saved` / `bytes_written`;
     // this mirrors the Python save-mode test which checks the stop response.
+    // Generous timeout: BATCH mode's stop_cameras waits for the writer
+    // threads to flush pending O_DIRECT writes, and the status response
+    // queues behind any in-flight binary frame chunks on a real LAN.
     const stopP = waitForEventMatching(
       mgr,
       'status',
       (p) => typeof p.data?.frames_saved === 'number',
-      10000,
+      30000,
     )
     mgr.stopCameras()
     const stop = await stopP
     expect(stop.data.frames_saved).toBeGreaterThan(0)
     expect(stop.data.bytes_written).toBeGreaterThan(0)
-  }, 30000)
+  }, 60000)
 })
 
 describe('MultiServerManager', () => {
