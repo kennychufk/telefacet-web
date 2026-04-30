@@ -96,7 +96,8 @@ export const useCameraStore = defineStore('camera', {
         index,
         address: server.address,
         connected: false,
-        cameras: 0
+        cameras: 0,
+        serverState: 'unknown'
       }))
 
       // Add servers to manager
@@ -123,8 +124,19 @@ export const useCameraStore = defineStore('camera', {
         const server = this.servers.find(s => s.index === serverIndex)
         if (server) {
           server.connected = false
+          server.serverState = 'unknown'
           console.warn(`⚠️ Server ${serverIndex} disconnected`)
         }
+        this._syncStateFromServers()
+      })
+
+      manager.on('server-state', ({ serverIndex, state }) => {
+        const server = this.servers.find(s => s.index === serverIndex)
+        if (server) {
+          server.serverState = state
+          console.log(`Server ${serverIndex} reported state: ${state}`)
+        }
+        this._syncStateFromServers()
       })
 
       manager.on('cameras-discovered', (data) => {
@@ -271,25 +283,57 @@ export const useCameraStore = defineStore('camera', {
       if (!this.canStopCameras) return false
 
       try {
-        // Stop all streaming first
+        // Clear client-side streaming state (server's stop_cameras also stops streams)
         this.cameras.forEach(camera => {
-          if (camera.streaming) {
-            this.toggleCameraStream(camera.globalId)
-          }
+          camera.streaming = false
+          camera.fps = 0
         })
 
-        // Stop cameras
+        // stop_cameras moves server from RUNNING → CONFIGURED
         this.serverManager.stopAllCameras()
 
         this.camerasRunning = false
-        this.camerasConfigured = false
-        this.saveModeConfigured = false
+        // camerasConfigured stays true — server is now in CONFIGURED state
         return true
       } catch (error) {
         this.lastError = 'Failed to stop cameras'
         console.error(error)
         return false
       }
+    },
+
+    async unconfigureAllCameras() {
+      if (!this.camerasConfigured || this.camerasRunning) return false
+
+      try {
+        // unconfigure moves server from CONFIGURED → IDLE
+        this.serverManager.unconfigureAll()
+
+        this.camerasConfigured = false
+        this.saveModeConfigured = false
+        return true
+      } catch (error) {
+        this.lastError = 'Failed to unconfigure cameras'
+        console.error(error)
+        return false
+      }
+    },
+
+    _syncStateFromServers() {
+      const connected = this.servers.filter(s => s.connected)
+      if (connected.length === 0) {
+        this.camerasConfigured = false
+        this.camerasRunning = false
+        return
+      }
+      const withKnownState = connected.filter(s => s.serverState && s.serverState !== 'unknown')
+      if (withKnownState.length === 0) return
+
+      // Use minimum state: all known-state servers must be at least configured/running
+      this.camerasConfigured = withKnownState.every(
+        s => s.serverState === 'configured' || s.serverState === 'running'
+      )
+      this.camerasRunning = withKnownState.every(s => s.serverState === 'running')
     },
 
     async resetFrameCounts() {

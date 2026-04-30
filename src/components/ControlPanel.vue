@@ -78,8 +78,9 @@
           <Pipeline
             :state="appState"
             :busy="busy"
+            :streaming="store.streamingCameras.length > 0"
             @advance="advance"
-            @halt="halt"
+            @retreat="retreat"
           />
         </section>
 
@@ -150,8 +151,7 @@ const appState = computed(() => {
   if (!store.configLoaded || !store.hasConnectedServers) return null
   if (!store.camerasConfigured) return 'connected'
   if (!store.camerasRunning) return 'configured'
-  if (store.streamingCameras.length === 0) return 'running'
-  return 'streaming'
+  return 'running'
 })
 
 async function loadFile(file) {
@@ -182,21 +182,24 @@ async function advance() {
       case 'configured':
         await store.startAllCameras()
         break
-      case 'running':
-        for (const cam of store.cameras) {
-          if (!cam.streaming) store.toggleCameraStream(cam.globalId)
-        }
-        break
     }
   } finally {
     busy.value = false
   }
 }
 
-async function halt() {
+async function retreat() {
+  if (busy.value) return
   busy.value = true
   try {
-    await store.stopAllCameras()
+    switch (appState.value) {
+      case 'running':
+        await store.stopAllCameras()
+        break
+      case 'configured':
+        await store.unconfigureAllCameras()
+        break
+    }
   } finally {
     busy.value = false
   }

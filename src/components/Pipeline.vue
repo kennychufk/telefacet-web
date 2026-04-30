@@ -47,20 +47,21 @@
       {{ nextAction }}
     </button>
 
-    <div v-if="state === 'streaming'" class="live-pill">
+    <div v-if="state === 'running' && streaming" class="live-pill">
       <LiveDot :on="true" color="var(--live)" />
       <span>Live</span>
     </div>
 
     <button
-      v-if="canTeardown"
-      class="btn-halt"
-      @click="$emit('halt')"
+      v-if="canRetreat"
+      class="btn-retreat"
+      :disabled="busy"
+      @click="$emit('retreat')"
     >
-      <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
-        <rect width="8" height="8" rx="1" />
+      <svg width="9" height="9" viewBox="0 0 9 9" fill="currentColor">
+        <path d="M7.5 1.5l-6 3 6 3V1.5z" />
       </svg>
-      Halt
+      {{ retreatAction }}
     </button>
   </div>
 </template>
@@ -70,24 +71,27 @@ import { computed } from 'vue'
 import LiveDot from './LiveDot.vue'
 
 const props = defineProps({
-  state: { type: String, required: true },
-  busy:  { type: Boolean, default: false }
+  state:     { type: String,  required: true },
+  busy:      { type: Boolean, default: false },
+  streaming: { type: Boolean, default: false }
 })
-defineEmits(['advance', 'halt'])
+defineEmits(['advance', 'retreat'])
 
 const stages = [
   { key: 'connected',  label: 'Discover',  sub: 'cameras found',     action: 'Configure' },
   { key: 'configured', label: 'Configure', sub: 'resolution & crop', action: 'Start' },
-  { key: 'running',    label: 'Start',     sub: 'pipeline active',   action: 'Stream' },
-  { key: 'streaming',  label: 'Stream',    sub: 'frames flowing',    action: null }
+  { key: 'running',    label: 'Start',     sub: 'pipeline active',   action: null }
 ]
 
-const idx = computed(() => stages.findIndex(s => s.key === props.state))
-const canAdvance = computed(() => idx.value >= 0 && idx.value < stages.length - 1)
-const canTeardown = computed(() => idx.value >= 2)
-const nextAction = computed(() =>
-  canAdvance.value ? stages[idx.value + 1].action : null
-)
+const idx          = computed(() => stages.findIndex(s => s.key === props.state))
+const canAdvance   = computed(() => idx.value >= 0 && idx.value < stages.length - 1)
+const canRetreat   = computed(() => idx.value > 0)
+const nextAction   = computed(() => canAdvance.value ? stages[idx.value + 1].action : null)
+const retreatAction = computed(() => {
+  if (props.state === 'running')    return 'Stop'
+  if (props.state === 'configured') return 'Unconfigure'
+  return null
+})
 </script>
 
 <style scoped>
@@ -225,7 +229,7 @@ const nextAction = computed(() =>
   font-weight: 500;
 }
 
-.btn-halt {
+.btn-retreat {
   width: 100%;
   padding: 7px 10px;
   background: transparent;
@@ -241,8 +245,13 @@ const nextAction = computed(() =>
   transition: all 0.15s;
 }
 
-.btn-halt:hover {
+.btn-retreat:hover:not(:disabled) {
   border-color: var(--line-hov);
   color: var(--text-mid);
+}
+
+.btn-retreat:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

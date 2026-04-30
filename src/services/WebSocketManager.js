@@ -85,8 +85,9 @@ export class WebSocketManager extends EventEmitter {
         this.logger.info(`Successfully connected to ${this.address}`)
         this.emit('connected', this.serverIndex)
 
-        // Discover cameras immediately after connection
+        // Discover cameras and query server state immediately after connection
         this.discoverCameras()
+        this.getState()
       }
 
       this.ws.onclose = (event) => {
@@ -341,6 +342,14 @@ export class WebSocketManager extends EventEmitter {
           })
           break
 
+        case 'state':
+          this.logger.info('Server state:', message.state)
+          this.emit('server-state', {
+            serverIndex: this.serverIndex,
+            state: message.state
+          })
+          break
+
         case 'status':
           this.logger.info('Status:', message.message)
           this.emit('status', {
@@ -448,6 +457,10 @@ export class WebSocketManager extends EventEmitter {
 
   discoverCameras() {
     return this.send({ cmd: 'discover' })
+  }
+
+  getState() {
+    return this.send({ cmd: 'get_state' })
   }
 
   configureCameras(config) {
@@ -595,6 +608,7 @@ export class MultiServerManager extends EventEmitter {
     // Forward other events
     manager.on('connected', (...args) => this.emit('server-connected', ...args))
     manager.on('disconnected', (...args) => this.emit('server-disconnected', ...args))
+    manager.on('server-state', (...args) => this.emit('server-state', ...args))
     manager.on('status', (...args) => this.emit('status', ...args))
     manager.on('server-error', (...args) => this.emit('server-error', ...args))
     manager.on('error', (...args) => this.emit('error', ...args))
