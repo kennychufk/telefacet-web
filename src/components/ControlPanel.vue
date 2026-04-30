@@ -79,6 +79,7 @@
             :state="appState"
             :busy="busy"
             :streaming="store.streamingCameras.length > 0"
+            :all-streaming="store.allStreaming"
             @advance="advance"
             @retreat="retreat"
           />
@@ -181,6 +182,9 @@ async function advance() {
         break
       case 'configured':
         await store.startAllCameras()
+        break
+      case 'running':
+        store.startAllStreams()
         break
     }
   } finally {

@@ -61,6 +61,11 @@ export const useCameraStore = defineStore('camera', {
 
     canStopCameras: (state) => {
       return state.camerasRunning
+    },
+
+    allStreaming: (state) => {
+      return state.cameras.length > 0 &&
+        state.cameras.every(cam => cam.streaming)
     }
   },
 
@@ -375,6 +380,23 @@ export const useCameraStore = defineStore('camera', {
         console.error(error)
         return false
       }
+    },
+
+    startAllStreams() {
+      if (!this.camerasRunning) {
+        this.lastError = 'Cameras must be running to stream'
+        return false
+      }
+
+      const pending = this.cameras.filter(cam => !cam.streaming)
+      if (pending.length === 0) return true
+
+      pending.forEach(camera => {
+        if (this.serverManager.startStream(camera.globalId)) {
+          camera.streaming = true
+        }
+      })
+      return true
     },
 
     toggleCameraStream(globalId) {
