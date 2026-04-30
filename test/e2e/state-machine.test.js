@@ -301,6 +301,57 @@ describe('State-machine edges', () => {
     await stopAll
   }, 90000)
 
+  // --- stop -> start without unconfigure ----------------------------------
+
+  // Regression: Camera::stop() on the server used to call
+  // releaseConfiguredResources(), which transitioned libcamera back to
+  // Available even though the server's tracked state read CONFIGURED. The
+  // next start_cameras then failed with "Camera in Available state trying
+  // start() requiring state Configured". The configure/unconfigure cycle
+  // test below masks this because it always goes IDLE between cycles; this
+  // test exercises the direct CONFIGURED -> RUNNING -> CONFIGURED -> RUNNING
+  // path that the UI's Stop+Play button sequence triggers.
+  it('handles start -> stop -> start without unconfigure in between', async () => {
+    const cfgP = waitForEvent(mgr, 'status', 5000)
+    mgr.configureCameras(TEST_CONFIG)
+    await cfgP
+
+    const start1 = waitForEvent(mgr, 'status', 5000)
+    mgr.startCameras()
+    await start1
+
+    const stop1 = waitForEventMatching(
+      mgr,
+      'status',
+      (p) => typeof p.data?.frames_saved === 'number',
+      10000,
+    )
+    mgr.stopCameras()
+    await stop1
+
+    // Critical: no unconfigure here. Must go directly back to RUNNING.
+    const start2 = waitForEvent(mgr, 'status', 5000)
+    mgr.startCameras()
+    await start2
+
+    // Confirm the second RUNNING is real, not just a status echo.
+    const cameraId = mgr.cameras[0].id
+    const ssP = waitForEvent(mgr, 'status', 5000)
+    mgr.startStream(cameraId)
+    await ssP
+    const frame = await waitForEvent(mgr, 'frame', 15000)
+    expect(frame.cameraId).toBe(cameraId)
+
+    const stop2 = waitForEventMatching(
+      mgr,
+      'status',
+      (p) => typeof p.data?.frames_saved === 'number',
+      30000,
+    )
+    mgr.stopCameras()
+    await stop2
+  }, 90000)
+
   // --- many-cycle reliability ----------------------------------------------
 
   it('handles many configure/unconfigure cycles reliably', async () => {
