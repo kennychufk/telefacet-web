@@ -29,6 +29,12 @@ export const useCameraStore = defineStore('camera', {
     focusMode: 'auto',      // 'auto' | 'manual'
     lensPosition: 0.0,
 
+    // Exposure & frame duration (µs). -1 = auto AE / unset fd (matches server defaults).
+    exposureTimeUs: -1,
+    frameDurationUs: -1,
+    // Sensor limits populated by get_frame_duration_limits: { min, max, current }
+    frameDurationLimits: null,
+
     // Error handling
     lastError: null
   }),
@@ -195,6 +201,14 @@ export const useCameraStore = defineStore('camera', {
         this.lastError = `Server ${serverIndex}: Failed to reconnect after multiple attempts`
         console.error(`❌ Server ${serverIndex} reconnection failed permanently`)
       })
+
+      manager.on('frame-duration-limits', (data) => {
+        this.frameDurationLimits = {
+          min: data.min,
+          max: data.max,
+          current: data.current
+        }
+      })
     },
 
     updateCameraList() {
@@ -230,6 +244,8 @@ export const useCameraStore = defineStore('camera', {
         await new Promise(resolve => setTimeout(resolve, 1000))
 
         this.camerasConfigured = true
+        // Limits come from ControlInfoMap, only valid once configured.
+        this.serverManager.getFrameDurationLimits()
         return true
       } catch (error) {
         this.lastError = 'Failed to configure cameras'
@@ -381,6 +397,45 @@ export const useCameraStore = defineStore('camera', {
         console.error(error)
         return false
       }
+    },
+
+    // exposureTimeUs < 0 → auto AE; > 0 → manual shutter (µs)
+    async setExposureTime(exposureTimeUs) {
+      if (!this.hasConnectedServers) {
+        this.lastError = 'No connected servers'
+        return false
+      }
+      try {
+        this.serverManager.setExposureTimeAll(exposureTimeUs)
+        this.exposureTimeUs = exposureTimeUs
+        return true
+      } catch (error) {
+        this.lastError = 'Failed to set exposure time'
+        console.error(error)
+        return false
+      }
+    },
+
+    // frameDurationUs <= 0 → unset (libcamera default); > 0 → locked (µs)
+    async setFrameDuration(frameDurationUs) {
+      if (!this.hasConnectedServers) {
+        this.lastError = 'No connected servers'
+        return false
+      }
+      try {
+        this.serverManager.setFrameDurationAll(frameDurationUs)
+        this.frameDurationUs = frameDurationUs
+        return true
+      } catch (error) {
+        this.lastError = 'Failed to set frame duration'
+        console.error(error)
+        return false
+      }
+    },
+
+    async fetchFrameDurationLimits() {
+      if (!this.hasConnectedServers) return false
+      return this.serverManager.getFrameDurationLimits()
     },
 
     // lensPosition < 0 engages continuous AF; >= 0 sets manual focus at that dioptre value

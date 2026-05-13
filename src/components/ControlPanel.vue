@@ -118,6 +118,12 @@
           </div>
         </section>
 
+        <!-- Exposure & frame rate -->
+        <section v-if="store.hasConnectedServers" class="section">
+          <div class="section-label">Exposure</div>
+          <ExposureSection :disabled="!store.camerasConfigured" />
+        </section>
+
         <!-- Focus -->
         <section v-if="store.hasConnectedServers" class="section last">
           <div class="section-label">Focus</div>
@@ -148,6 +154,7 @@ import IconBtn from './IconBtn.vue'
 import LiveDot from './LiveDot.vue'
 import Pipeline from './Pipeline.vue'
 import FocusSection from './FocusSection.vue'
+import ExposureSection from './ExposureSection.vue'
 
 const store = useCameraStore()
 const fileInput = ref(null)

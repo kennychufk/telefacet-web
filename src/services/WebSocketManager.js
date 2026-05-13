@@ -367,6 +367,15 @@ export class WebSocketManager extends EventEmitter {
           })
           break
 
+        case 'frame_duration_limits':
+          this.emit('frame-duration-limits', {
+            serverIndex: this.serverIndex,
+            min: message.min,
+            max: message.max,
+            current: message.current
+          })
+          break
+
         default:
           this.logger.warn('Unknown message type:', message.type)
       }
@@ -438,6 +447,23 @@ export class WebSocketManager extends EventEmitter {
   setLensPosition(lensPosition) {
     this.logger.info(`Setting lens position to ${lensPosition}`)
     return this.send({ cmd: 'set_lens_position', lens_position: lensPosition })
+  }
+
+  // exposure_time < 0 → auto AE; > 0 → manual shutter at that value (µs, max 1_000_000)
+  setExposureTime(exposureTime) {
+    this.logger.info(`Setting exposure time to ${exposureTime}`)
+    return this.send({ cmd: 'set_exposure_time', exposure_time: exposureTime })
+  }
+
+  // frame_duration <= 0 → unset (libcamera default); > 0 → lock to that value (µs)
+  setFrameDuration(frameDuration) {
+    this.logger.info(`Setting frame duration to ${frameDuration}`)
+    return this.send({ cmd: 'set_frame_duration', frame_duration: frameDuration })
+  }
+
+  // Returns asynchronously via 'frame-duration-limits' event
+  getFrameDurationLimits() {
+    return this.send({ cmd: 'get_frame_duration_limits' })
   }
 
   handleReconnect() {
@@ -618,6 +644,7 @@ export class MultiServerManager extends EventEmitter {
     manager.on('server-error', (...args) => this.emit('server-error', ...args))
     manager.on('error', (...args) => this.emit('error', ...args))
     manager.on('reconnect-failed', (...args) => this.emit('reconnect-failed', ...args))
+    manager.on('frame-duration-limits', (...args) => this.emit('frame-duration-limits', ...args))
 
     this.servers.set(index, manager)
     return manager
@@ -709,6 +736,34 @@ export class MultiServerManager extends EventEmitter {
         server.setLensPosition(lensPosition)
       }
     }
+  }
+
+  setExposureTimeAll(exposureTime) {
+    this.logger.info(`Setting exposure time to ${exposureTime} on all servers`)
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.setExposureTime(exposureTime)
+      }
+    }
+  }
+
+  setFrameDurationAll(frameDuration) {
+    this.logger.info(`Setting frame duration to ${frameDuration} on all servers`)
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.setFrameDuration(frameDuration)
+      }
+    }
+  }
+
+  // All cameras share the same sensor → ask the first connected server.
+  getFrameDurationLimits() {
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        return server.getFrameDurationLimits()
+      }
+    }
+    return false
   }
 
   startAllCameras() {
