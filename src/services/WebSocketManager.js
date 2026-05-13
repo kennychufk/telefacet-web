@@ -215,7 +215,7 @@ export class WebSocketManager extends EventEmitter {
     if (totalChunks === 0 && totalSize === 0) {
       this.logger.debug(`Header only frame ${frameId} from camera ${cameraId}`)
       this.updateFrameStats(cameraId)
-      this.updateServerFpsStats(cameraId, timestampUs, frameDurationUs)
+      this.updateServerFpsStats(cameraId, timestampUs, frameDurationUs, frameId)
       this.emitFrame(cameraId, frameId, width, height, bytesPerLine, new Uint8Array(0), pixelFormat, framesSaved)
       return
     }
@@ -303,7 +303,7 @@ export class WebSocketManager extends EventEmitter {
 
       this.stats.chunkedFramesReceived++
       this.updateFrameStats(buffer.header.cameraId)
-      this.updateServerFpsStats(buffer.header.cameraId, buffer.header.timestampUs, buffer.header.frameDurationUs)
+      this.updateServerFpsStats(buffer.header.cameraId, buffer.header.timestampUs, buffer.header.frameDurationUs, buffer.header.frameId)
       this.emitFrame(
         buffer.header.cameraId,
         buffer.header.frameId,
@@ -412,30 +412,35 @@ export class WebSocketManager extends EventEmitter {
     this.frameStats.set(cameraId, stats)
   }
 
-  updateServerFpsStats(cameraId, timestampUs, frameDurationUs) {
+  updateServerFpsStats(cameraId, timestampUs, frameDurationUs, frameId) {
     const now = performance.now()
     const stats = this.serverFpsStats.get(cameraId) || {
       durations: [],
       lastTimestamp: 0,
+      lastFrameId: -1,
       lastWallTime: now
     }
 
-    // Primary: diff consecutive hardware timestamps for accuracy.
+    // Primary: diff consecutive hardware timestamps, normalized by frame ID gap to
+    // recover the true per-frame duration even when frames are dropped due to backpressure.
     // Fallback to frame_duration_us only when timestamp is unavailable.
     let durationUs = 0
-    if (timestampUs > 0 && stats.lastTimestamp > 0) {
-      durationUs = timestampUs - stats.lastTimestamp
+    if (timestampUs > 0 && stats.lastTimestamp > 0 && stats.lastFrameId >= 0) {
+      const frameIdGap = frameId - stats.lastFrameId
+      if (frameIdGap > 0) {
+        durationUs = (timestampUs - stats.lastTimestamp) / frameIdGap
+      }
     } else if (timestampUs === 0 && frameDurationUs > 0) {
       durationUs = frameDurationUs
     }
 
-    // Sanity check: reject durations outside 1 fps – 240 fps range
-    if (durationUs > 4167 && durationUs < 1000000) {
+    if (durationUs > 0) {
       stats.durations.push(durationUs)
       if (stats.durations.length > 10) stats.durations.shift()
     }
 
     if (timestampUs > 0) stats.lastTimestamp = timestampUs
+    stats.lastFrameId = frameId
 
     const wallElapsed = now - stats.lastWallTime
     if (wallElapsed >= 1000 && stats.durations.length > 0) {
