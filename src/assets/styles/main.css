@@ -13,6 +13,7 @@
   --accent-dim: oklch(62% 0.07 220);
   --live:      oklch(62% 0.14 155);
   --live-dim:  oklch(30% 0.08 155);
+  --hw-fps:    oklch(74% 0.13 75);
   --warn:      oklch(70% 0.13 50);
   --danger:    oklch(58% 0.18 20);
 

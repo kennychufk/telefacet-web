@@ -98,7 +98,16 @@
               @click="store.toggleCameraStream(cam.globalId)"
             >
               <span>cam{{ String(cam.globalId).padStart(2, '0') }}</span>
-              <span v-if="cam.streaming" class="cam-fps">{{ cam.fps }} fps</span>
+              <span
+                v-if="cam.streaming"
+                class="cam-fps"
+                :title="`Received (client): ${cam.clientFps} fps — frames decoded per second\nCaptured (server): ${cam.serverFps} fps — libcamera hardware cadence`"
+              >
+                <span class="cam-fps-client">{{ cam.clientFps }}</span>
+                <span class="cam-fps-sep">/</span>
+                <span class="cam-fps-server">{{ cam.serverFps }}</span>
+                <span class="cam-fps-unit">fps</span>
+              </span>
             </button>
           </div>
         </section>
@@ -426,8 +435,14 @@ async function toggleHeaderOnly() {
 
 .cam-fps {
   font-size: 9.5px;
-  opacity: 0.8;
+  white-space: nowrap;
+  cursor: help;
 }
+
+.cam-fps-client { color: var(--live); }
+.cam-fps-sep    { color: var(--text-sec); margin: 0 0.15em; font-weight: 300; opacity: 0.6; }
+.cam-fps-server { color: var(--hw-fps); }
+.cam-fps-unit   { color: var(--text-sec); margin-left: 0.2em; opacity: 0.7; }
 
 /* Toggle */
 .toggle-row {

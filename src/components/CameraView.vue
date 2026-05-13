@@ -18,14 +18,30 @@
       class="hover-overlay"
       :class="{ visible: hovered }"
     >
-      <div class="fps">{{ streaming ? `${camera.fps} fps` : '' }}</div>
+      <div
+        v-if="streaming"
+        class="fps"
+        :title="`Received (client): ${camera.clientFps} fps — frames decoded per second\nCaptured (server): ${camera.serverFps} fps — libcamera hardware cadence`"
+      >
+        <span class="fps-client">{{ camera.clientFps }}</span>
+        <span class="fps-sep">/</span>
+        <span class="fps-server">{{ camera.serverFps }}</span>
+        <span class="fps-unit">fps</span>
+      </div>
       <div class="cam-label">cam{{ paddedId }}</div>
     </div>
 
     <!-- Header-only big display -->
     <div v-if="isHeaderOnlyMode && streaming" class="header-display">
       <div class="cam-label-big">cam{{ paddedId }}</div>
-      <div class="big-fps">{{ camera.fps }}</div>
+      <div
+        class="big-fps-pair"
+        :title="`Received (client): ${camera.clientFps} fps — frames decoded per second\nCaptured (server): ${camera.serverFps} fps — libcamera hardware cadence`"
+      >
+        <span class="big-fps-client">{{ camera.clientFps }}</span>
+        <span class="big-fps-sep">/</span>
+        <span class="big-fps-server">{{ camera.serverFps }}</span>
+      </div>
       <div class="big-fps-unit">fps</div>
       <div class="frame-id">#{{ latestFrameId.toLocaleString() }}</div>
     </div>
@@ -219,9 +235,15 @@ watch(streaming, (on) => {
   right: 10px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--live);
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: help;
 }
+
+.fps-client { color: var(--live); }
+.fps-sep    { color: var(--text-sec); margin: 0 0.18em; font-weight: 300; opacity: 0.6; }
+.fps-server { color: var(--hw-fps); }
+.fps-unit   { color: var(--text-sec); font-size: 0.85em; margin-left: 0.3em; }
 
 .hover-overlay .cam-label {
   position: absolute;
@@ -252,14 +274,19 @@ watch(streaming, (on) => {
   letter-spacing: 0.1em;
 }
 
-.big-fps {
+.big-fps-pair {
   font-family: var(--font-mono);
   font-size: clamp(18px, 8cqw, 52px);
   font-weight: 500;
-  color: var(--live);
   letter-spacing: -0.02em;
   line-height: 1;
+  white-space: nowrap;
+  cursor: help;
 }
+
+.big-fps-client { color: var(--live); }
+.big-fps-sep    { color: var(--text-sec); margin: 0 0.12em; font-weight: 300; opacity: 0.6; }
+.big-fps-server { color: var(--hw-fps); }
 
 .big-fps-unit {
   font-family: var(--font-mono);

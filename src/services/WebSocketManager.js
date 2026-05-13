@@ -32,6 +32,7 @@ export class WebSocketManager extends EventEmitter {
 
     // Frame statistics
     this.frameStats = new Map()
+    this.serverFpsStats = new Map()
 
     // Chunked transfer state - key by frame_uuid
     this.chunkBuffers = new Map()
@@ -180,35 +181,41 @@ export class WebSocketManager extends EventEmitter {
   }
 
   handleChunkStart(data) {
-    // Protocol v2: ChunkStartMarker (8) + ChunkHeader (40) = 48 bytes
-    if (data.byteLength !== 48) {
-      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 48`)
+    // Protocol v3: ChunkStartMarker (8) + ChunkHeader (52) = 60 bytes
+    if (data.byteLength !== 60) {
+      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 60`)
       return
     }
 
     const view = new DataView(data)
     const version = view.getUint32(4, true)
 
-    if (version !== 2) {
-      this.logger.error(`Unsupported chunk version: ${version} (expected 2)`)
+    if (version !== 3) {
+      this.logger.error(`Unsupported chunk version: ${version} (expected 3)`)
       return
     }
 
-    const frameUuid    = view.getUint32(8,  true)
-    const frameId      = view.getUint32(12, true)
-    const cameraId     = view.getUint32(16, true)
-    const totalChunks  = view.getUint32(20, true)
-    const totalSize    = view.getUint32(24, true)
-    const bytesPerLine = view.getUint32(28, true)
-    const width        = view.getUint32(32, true)
-    const height       = view.getUint32(36, true)
-    const pixelFormat  = view.getUint32(40, true)  // FourCC (e.g. YUV420)
-    const framesSaved  = view.getUint32(44, true)
+    const frameUuid      = view.getUint32(8,  true)
+    const frameId        = view.getUint32(12, true)
+    const cameraId       = view.getUint32(16, true)
+    const totalChunks    = view.getUint32(20, true)
+    const totalSize      = view.getUint32(24, true)
+    const bytesPerLine   = view.getUint32(28, true)
+    const width          = view.getUint32(32, true)
+    const height         = view.getUint32(36, true)
+    const pixelFormat    = view.getUint32(40, true)
+    const framesSaved    = view.getUint32(44, true)
+    // uint64 read as two uint32s (JS safe-integer range covers camera uptime)
+    const tsLow          = view.getUint32(48, true)
+    const tsHigh         = view.getUint32(52, true)
+    const timestampUs    = tsHigh * 0x100000000 + tsLow
+    const frameDurationUs = view.getUint32(56, true)
 
     // Check if this is header only mode (totalChunks = 0, totalSize = 0)
     if (totalChunks === 0 && totalSize === 0) {
       this.logger.debug(`Header only frame ${frameId} from camera ${cameraId}`)
       this.updateFrameStats(cameraId)
+      this.updateServerFpsStats(cameraId, timestampUs, frameDurationUs)
       this.emitFrame(cameraId, frameId, width, height, bytesPerLine, new Uint8Array(0), pixelFormat, framesSaved)
       return
     }
@@ -216,7 +223,7 @@ export class WebSocketManager extends EventEmitter {
     this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
 
     this.chunkBuffers.set(frameUuid, {
-      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved },
+      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs },
       chunks: new Array(totalChunks),
       receivedChunks: 0,
       startTime: performance.now()
@@ -296,6 +303,7 @@ export class WebSocketManager extends EventEmitter {
 
       this.stats.chunkedFramesReceived++
       this.updateFrameStats(buffer.header.cameraId)
+      this.updateServerFpsStats(buffer.header.cameraId, buffer.header.timestampUs, buffer.header.frameDurationUs)
       this.emitFrame(
         buffer.header.cameraId,
         buffer.header.frameId,
@@ -391,17 +399,53 @@ export class WebSocketManager extends EventEmitter {
     const elapsed = now - stats.lastTime
 
     if (elapsed > 1000) { // Update FPS every second
-      const fps = (stats.count / elapsed) * 1000
+      const clientFps = (stats.count / elapsed) * 1000
       this.emit('fps-update', {
         serverIndex: this.serverIndex,
         cameraId,
-        fps: Math.round(fps * 10) / 10
+        clientFps: Math.round(clientFps * 10) / 10
       })
       stats.count = 0
       stats.lastTime = now
     }
 
     this.frameStats.set(cameraId, stats)
+  }
+
+  updateServerFpsStats(cameraId, timestampUs, frameDurationUs) {
+    const now = performance.now()
+    const stats = this.serverFpsStats.get(cameraId) || {
+      durations: [],
+      lastTimestamp: 0,
+      lastWallTime: now
+    }
+
+    // Primary: diff consecutive hardware timestamps for accuracy.
+    // Fallback to frame_duration_us only when timestamp is unavailable.
+    let durationUs = 0
+    if (timestampUs > 0 && stats.lastTimestamp > 0) {
+      durationUs = timestampUs - stats.lastTimestamp
+    } else if (timestampUs === 0 && frameDurationUs > 0) {
+      durationUs = frameDurationUs
+    }
+
+    // Sanity check: reject durations outside 1 fps – 240 fps range
+    if (durationUs > 4167 && durationUs < 1000000) {
+      stats.durations.push(durationUs)
+      if (stats.durations.length > 10) stats.durations.shift()
+    }
+
+    if (timestampUs > 0) stats.lastTimestamp = timestampUs
+
+    const wallElapsed = now - stats.lastWallTime
+    if (wallElapsed >= 1000 && stats.durations.length > 0) {
+      const avgDuration = stats.durations.reduce((a, b) => a + b, 0) / stats.durations.length
+      const serverFps = Math.round((1000000 / avgDuration) * 10) / 10
+      this.emit('server-fps-update', { serverIndex: this.serverIndex, cameraId, serverFps })
+      stats.lastWallTime = now
+    }
+
+    this.serverFpsStats.set(cameraId, stats)
   }
 
   emitFrame(cameraId, frameId, width, height, bytesPerLine, data,
@@ -630,6 +674,16 @@ export class MultiServerManager extends EventEmitter {
       const globalId = this.getGlobalCameraId(data.serverIndex, data.cameraId)
       if (globalId !== null) {
         this.emit('fps-update', {
+          ...data,
+          globalCameraId: globalId
+        })
+      }
+    })
+
+    manager.on('server-fps-update', (data) => {
+      const globalId = this.getGlobalCameraId(data.serverIndex, data.cameraId)
+      if (globalId !== null) {
+        this.emit('server-fps-update', {
           ...data,
           globalCameraId: globalId
         })

@@ -167,7 +167,14 @@ export const useCameraStore = defineStore('camera', {
       manager.on('fps-update', (data) => {
         const camera = this.cameras.find(cam => cam.globalId === data.globalCameraId)
         if (camera) {
-          camera.fps = data.fps
+          camera.clientFps = data.clientFps
+        }
+      })
+
+      manager.on('server-fps-update', (data) => {
+        const camera = this.cameras.find(cam => cam.globalId === data.globalCameraId)
+        if (camera) {
+          camera.serverFps = data.serverFps
         }
       })
 
@@ -219,7 +226,8 @@ export const useCameraStore = defineStore('camera', {
         serverIndex: info.serverIndex,
         localId: info.localCameraId,
         streaming: false,
-        fps: 0,
+        clientFps: 0,
+        serverFps: 0,
         framesSaved: 0
       }))
 
@@ -309,7 +317,8 @@ export const useCameraStore = defineStore('camera', {
         // Clear client-side streaming state (server's stop_cameras also stops streams)
         this.cameras.forEach(camera => {
           camera.streaming = false
-          camera.fps = 0
+          camera.clientFps = 0
+          camera.serverFps = 0
         })
 
         // stop_cameras moves server from RUNNING → CONFIGURED
@@ -490,7 +499,8 @@ export const useCameraStore = defineStore('camera', {
       if (camera.streaming) {
         if (this.serverManager.stopStream(globalId)) {
           camera.streaming = false
-          camera.fps = 0
+          camera.clientFps = 0
+          camera.serverFps = 0
           return true
         }
       } else {
