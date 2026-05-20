@@ -59,7 +59,7 @@ npm run preview
 YAML files define:
 - Server addresses (WebSocket URLs)
 - Camera configuration (resolution, cropping, v4l2 buffers)
-- Frame saving options (none/buffer/batch/checkerboard modes)
+- Frame saving options (none/buffer/batch/checkerboard/checkerboard2x2 modes)
 - Per-camera AWB gains for color correction
 
 #### Frame Saving Modes
@@ -68,10 +68,11 @@ YAML files define:
 2. **buffer**: Buffer frames in memory, write all at once when stopping
 3. **batch**: Write frames in batches during capture
 4. **checkerboard**: Detect and save only frames containing checkerboard patterns
+5. **checkerboard2x2**: Split each frame into 4 equal quadrants and save the whole frame if **any** quadrant contains a checkerboard pattern. Uses the same `checkerboard_*` parameters as `checkerboard`.
 
 #### Checkerboard Mode Configuration
 
-When using `mode: checkerboard`, additional parameters are available:
+When using `mode: checkerboard` or `mode: checkerboard2x2`, additional parameters are available:
 
 ```yaml
 frame_saving:

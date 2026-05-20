@@ -87,7 +87,7 @@ export class ConfigLoader {
       }
     }
 
-    const validModes = ['none', 'buffer', 'batch', 'checkerboard']
+    const validModes = ['none', 'buffer', 'batch', 'checkerboard', 'checkerboard2x2']
     if (!validModes.includes(config.frame_saving.mode)) {
       throw new Error(`frame_saving.mode must be one of: ${validModes.join(', ')}`)
     }
@@ -124,8 +124,9 @@ export class ConfigLoader {
       config.frame_saving.writer_threads = 4
     }
 
-    // Validate checkerboard-specific parameters if mode is checkerboard
-    if (config.frame_saving.mode === 'checkerboard') {
+    // Validate checkerboard-specific parameters if mode uses checkerboard detection
+    if (config.frame_saving.mode === 'checkerboard' ||
+        config.frame_saving.mode === 'checkerboard2x2') {
       // Set defaults for checkerboard parameters
       if (typeof config.frame_saving.checkerboard_rows !== 'number') {
         config.frame_saving.checkerboard_rows = 8
@@ -208,7 +209,7 @@ export class ConfigLoader {
         prepend_timestamp_to_dir: false,
         batch_size: 10,
         writer_threads: 4,
-        // Optional checkerboard parameters (only used when mode is 'checkerboard')
+        // Optional checkerboard parameters (used when mode is 'checkerboard' or 'checkerboard2x2')
         checkerboard_rows: 8,
         checkerboard_cols: 11,
         checkerboard_full_res_detection: false,

@@ -274,8 +274,8 @@ export const useCameraStore = defineStore('camera', {
           writer_threads: saveConfig.writer_threads
         }
 
-        // Add checkerboard parameters if mode is checkerboard
-        if (saveConfig.mode === 'checkerboard') {
+        // Add checkerboard parameters if mode uses checkerboard detection
+        if (saveConfig.mode === 'checkerboard' || saveConfig.mode === 'checkerboard2x2') {
           params.checkerboard_rows = saveConfig.checkerboard_rows
           params.checkerboard_cols = saveConfig.checkerboard_cols
           params.checkerboard_full_res_detection = saveConfig.checkerboard_full_res_detection
