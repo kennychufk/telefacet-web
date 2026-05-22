@@ -12,6 +12,17 @@
       :height="canvasHeight"
     />
 
+    <!-- Detected-checkerboard corner overlay. Same intrinsic pixel size as
+         the WebGL canvas so server-supplied full-frame corner coordinates
+         map 1:1. Hidden alongside the main canvas in header-only mode. -->
+    <canvas
+      ref="overlayCanvas"
+      class="canvas overlay"
+      :class="{ hidden: isHeaderOnlyMode }"
+      :width="canvasWidth"
+      :height="canvasHeight"
+    />
+
     <!-- Hover overlay (image mode) -->
     <div
       v-if="!isHeaderOnlyMode"
@@ -64,16 +75,23 @@ const props = defineProps({
 
 const store = useCameraStore()
 const canvas = ref(null)
+const overlayCanvas = ref(null)
 const hovered = ref(false)
 const latestFrameId = ref(0)
 
 let debayer = null
+let overlayCtx = null
 let animationFrameId = null
 let lastFrameTime = 0
 const frameDropThreshold = 50
 let blackFrameRendered = false
 const frameQueue = []
 let frameHandler = null
+
+// Strictly per-frame overlay: only paint corners that came in this frame's
+// header. If the next frame has no corners, the overlay is cleared.
+const CORNER_COLOR = '#00FF80'
+const CORNER_RADIUS_PX = 6
 
 const canvasWidth = computed(() => store.config?.camera_config?.width || 1456)
 const canvasHeight = computed(() => store.config?.camera_config?.height || 1088)
@@ -85,6 +103,9 @@ onMounted(() => {
   if (!canvas.value) return
   try {
     debayer = new Debayer(canvas.value)
+    if (overlayCanvas.value) {
+      overlayCtx = overlayCanvas.value.getContext('2d')
+    }
     setupFrameListener()
     console.log(`✅ WebGL initialized for camera ${props.camera.globalId}`)
   } catch (error) {
@@ -126,6 +147,7 @@ function setupFrameListener() {
       height: data.height,
       bytesPerLine: data.bytesPerLine,
       frameId: data.frameId,
+      cornerSets: data.cornerSets || [],
       timestamp: now
     })
 
@@ -142,6 +164,37 @@ function renderBlackFrame() {
     ctx.fillStyle = '#08080c'
     ctx.fillRect(0, 0, canvas.value.width, canvas.value.height)
   }
+  clearOverlay()
+}
+
+function clearOverlay() {
+  if (!overlayCtx || !overlayCanvas.value) return
+  overlayCtx.clearRect(0, 0, overlayCanvas.value.width, overlayCanvas.value.height)
+}
+
+function drawCornerOverlay(cornerSets) {
+  if (!overlayCtx || !overlayCanvas.value) return
+  // Strict per-frame: wipe first so a frame with no detections leaves the
+  // overlay blank.
+  const w = overlayCanvas.value.width
+  const h = overlayCanvas.value.height
+  overlayCtx.clearRect(0, 0, w, h)
+  if (!cornerSets || cornerSets.length === 0) return
+
+  // The Debayer shader (src/webgl/Debayer.js) flips both texture coords —
+  // `v_texCoord = vec2(1.0 - x, 1.0 - y)` — which renders the frame rotated
+  // 180° from the raw YUV buffer the server's corner coordinates live in.
+  // Mirror that flip here so corner (x, y) lands at the same on-screen
+  // position as buffer pixel (x, y) after the shader's rotation.
+  overlayCtx.fillStyle = CORNER_COLOR
+  for (const set of cornerSets) {
+    if (!set.corners) continue
+    for (const c of set.corners) {
+      overlayCtx.beginPath()
+      overlayCtx.arc(w - c.x, h - c.y, CORNER_RADIUS_PX, 0, Math.PI * 2)
+      overlayCtx.fill()
+    }
+  }
 }
 
 function renderLoop() {
@@ -150,6 +203,7 @@ function renderLoop() {
     lastFrameTime = frame.timestamp
     try {
       debayer.processFrame(frame.data, frame.width, frame.height, frame.bytesPerLine)
+      drawCornerOverlay(frame.cornerSets)
     } catch (error) {
       console.error(`Error processing frame for camera ${props.camera.globalId}:`, error)
     }
@@ -183,6 +237,7 @@ watch(streaming, (on) => {
       animationFrameId = null
     }
     latestFrameId.value = 0
+    clearOverlay()
   }
 })
 </script>
@@ -207,6 +262,15 @@ watch(streaming, (on) => {
 
 .canvas.hidden {
   opacity: 0;
+}
+
+/* Corner overlay sits on top of the WebGL canvas at the same intrinsic size,
+   so corner coordinates emitted by the server (in full-frame Y-pixel space)
+   map 1:1 to canvas pixels without further scaling. */
+.canvas.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 /* Hover overlay (image mode) */

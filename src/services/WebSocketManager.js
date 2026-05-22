@@ -181,17 +181,20 @@ export class WebSocketManager extends EventEmitter {
   }
 
   handleChunkStart(data) {
-    // Protocol v3: ChunkStartMarker (8) + ChunkHeader (52) = 60 bytes
-    if (data.byteLength !== 60) {
-      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected 60`)
+    // Protocol v4: ChunkStartMarker (8) + ChunkHeader (60) = 68 bytes minimum,
+    // plus an optional variable-size CornerBlock appended in the same message
+    // when the server's save mode is `checkerboard` or `checkerboard2x2`.
+    const MIN_SIZE = 68
+    if (data.byteLength < MIN_SIZE) {
+      this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected at least ${MIN_SIZE}`)
       return
     }
 
     const view = new DataView(data)
     const version = view.getUint32(4, true)
 
-    if (version !== 3) {
-      this.logger.error(`Unsupported chunk version: ${version} (expected 3)`)
+    if (version !== 4) {
+      this.logger.error(`Unsupported chunk version: ${version} (expected 4)`)
       return
     }
 
@@ -210,24 +213,76 @@ export class WebSocketManager extends EventEmitter {
     const tsHigh         = view.getUint32(52, true)
     const timestampUs    = tsHigh * 0x100000000 + tsLow
     const frameDurationUs = view.getUint32(56, true)
+    // v4 additions
+    const cornerBlockSize = view.getUint32(60, true)
+    const numCornerSets   = view.getUint16(64, true)
+    // reserved at offset 66 (uint16), unused
+
+    if (data.byteLength !== MIN_SIZE + cornerBlockSize) {
+      this.logger.error(
+        `Chunk start length mismatch: got ${data.byteLength}, expected ${MIN_SIZE + cornerBlockSize}`
+      )
+      return
+    }
+
+    const cornerSets = this.parseCornerBlock(view, MIN_SIZE, cornerBlockSize, numCornerSets)
 
     // Check if this is header only mode (totalChunks = 0, totalSize = 0)
     if (totalChunks === 0 && totalSize === 0) {
       this.logger.debug(`Header only frame ${frameId} from camera ${cameraId}`)
       this.updateFrameStats(cameraId)
       this.updateServerFpsStats(cameraId, timestampUs, frameDurationUs, frameId)
-      this.emitFrame(cameraId, frameId, width, height, bytesPerLine, new Uint8Array(0), pixelFormat, framesSaved)
+      this.emitFrame(cameraId, frameId, width, height, bytesPerLine,
+                     new Uint8Array(0), pixelFormat, framesSaved, cornerSets)
       return
     }
 
     this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
 
     this.chunkBuffers.set(frameUuid, {
-      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs },
+      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs, cornerSets },
       chunks: new Array(totalChunks),
       receivedChunks: 0,
       startTime: performance.now()
     })
+  }
+
+  // Parse the v4 CornerBlock that follows ChunkHeader. Returns an array of
+  // { setId, flags, corners: [{x, y}, ...] } sets. Coordinates are in
+  // full-frame Y-plane pixel space, so the renderer can draw them directly
+  // on a canvas sized to the frame's width × height.
+  parseCornerBlock(view, offset, blockSize, expectedSets) {
+    const sets = []
+    if (blockSize === 0 || expectedSets === 0) return sets
+
+    const end = offset + blockSize
+    while (offset + 4 <= end && sets.length < expectedSets) {
+      const setId = view.getUint8(offset)
+      const flags = view.getUint8(offset + 1)
+      const numCorners = view.getUint16(offset + 2, true)
+      offset += 4
+
+      const cornerBytes = numCorners * 8
+      if (offset + cornerBytes > end) {
+        this.logger.error(`CornerBlock overrun: set ${sets.length} claims ${numCorners} corners but only ${end - offset} bytes left`)
+        return sets
+      }
+
+      const corners = new Array(numCorners)
+      for (let i = 0; i < numCorners; i++) {
+        const x = view.getFloat32(offset, true)
+        const y = view.getFloat32(offset + 4, true)
+        corners[i] = { x, y }
+        offset += 8
+      }
+
+      sets.push({ setId, flags, corners })
+    }
+
+    if (sets.length !== expectedSets) {
+      this.logger.warn(`Parsed ${sets.length} corner sets, expected ${expectedSets}`)
+    }
+    return sets
   }
 
   handleChunkData(data) {
@@ -270,8 +325,6 @@ export class WebSocketManager extends EventEmitter {
     buffer.chunks[chunkIndex] = new Uint8Array(data, 16, chunkSize)
     buffer.receivedChunks++
 
-    this.logger.debug(`Received chunk ${chunkIndex + 1}/${buffer.header.totalChunks} for frame ${buffer.header.frameId}`)
-
     // Check if all chunks received
     if (buffer.receivedChunks === buffer.header.totalChunks) {
       this.assembleFrame(frameUuid, buffer)
@@ -312,7 +365,8 @@ export class WebSocketManager extends EventEmitter {
         buffer.header.bytesPerLine,
         frameData,
         buffer.header.pixelFormat,
-        buffer.header.framesSaved
+        buffer.header.framesSaved,
+        buffer.header.cornerSets
       )
 
       // Clean up
@@ -454,7 +508,7 @@ export class WebSocketManager extends EventEmitter {
   }
 
   emitFrame(cameraId, frameId, width, height, bytesPerLine, data,
-            pixelFormat = 0, framesSaved = 0) {
+            pixelFormat = 0, framesSaved = 0, cornerSets = []) {
     this.emit('frame', {
       serverIndex: this.serverIndex,
       cameraId,
@@ -465,6 +519,7 @@ export class WebSocketManager extends EventEmitter {
       data,
       pixelFormat,
       framesSaved,
+      cornerSets,
       isHeaderOnly: data.length === 0
     })
   }

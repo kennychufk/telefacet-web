@@ -50,9 +50,11 @@ npm run preview
 - `start_stream`/`stop_stream`: Control per-camera streaming
 - `set_save_mode`: Configure frame saving behavior
 
-**Binary Messages**:
-- Header (20 bytes): frameId, cameraId, bytesPerLine, width, height
-- Frame data: 10-bit SRGGB Bayer data in packed format (SRGGB10P)
+**Binary Messages (protocol v4)**:
+- `ChunkStartMarker` (8 bytes): `magic = 'CHUN'`, `version = 4`.
+- `ChunkHeader` (60 bytes) follows the marker in the same WS message: frame_uuid, frame_id, camera_id, total_chunks, total_size, bytes_per_line, width, height, pixel_format, frames_saved, timestamp_us, frame_duration_us, **corner_block_size (u32), num_corner_sets (u16), reserved (u16)**.
+- Optional `CornerBlock` (variable, present when `num_corner_sets > 0`) appended to that same message: `num_corner_sets × (CornerSetHeader{set_id u8, flags u8, num_corners u16} + num_corners × {float x, float y})`. Coordinates are in full-frame Y-plane pixel space; the renderer overlays them 1:1 on the canvas. The server emits a corner block only when the save mode is `checkerboard` or `checkerboard2x2` and at least one board was detected on that exact frame.
+- `ChunkData` packets carry the frame payload (YUV420 main stream).
 
 ### Configuration Format
 
@@ -98,3 +100,5 @@ One quality mode available for now (will be extended in the future):
 - **Quality**: Bilinear interpolation
 
 The debayer handles 10-bit SRGGB10P packed format where 4 pixels are packed into 5 bytes.
+
+The shader in `src/webgl/Debayer.js` rotates the rendered frame 180° relative to the raw buffer by setting `v_texCoord = vec2(1.0 - a_texCoord.x, 1.0 - a_texCoord.y)`. Any 2D overlay drawn on top in buffer coordinates (e.g. the checkerboard corner overlay in `CameraView.vue`) must apply the same flip — `(w - x, h - y)` — or it will land 180° off from the displayed image.
