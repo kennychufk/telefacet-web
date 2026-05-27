@@ -1,6 +1,6 @@
 // Unit-level test: WebSocketManager must reject CHUN frames whose version
-// isn't 2. We boot a tiny `ws` server in-process, send a crafted v1 CHUN,
-// and assert the manager doesn't emit a `frame` for it.
+// isn't 5. We boot a tiny `ws` server in-process, send a crafted CHUN, and
+// assert the manager only emits a `frame` for the supported version.
 //
 // Unlike the live-server tests, this test doesn't need the Pi.
 
@@ -14,9 +14,9 @@ function u32(view, offset, value) {
   view.setUint32(offset, value, true)
 }
 
-/** Build a 48-byte CHUN packet with the given version. */
+/** Build a 76-byte v5 CHUN header-only packet with the given version. */
 function buildChunPacket(version, overrides = {}) {
-  const buf = new ArrayBuffer(48)
+  const buf = new ArrayBuffer(76)
   const view = new DataView(buf)
   u32(view, 0, 0x4348554E) // 'CHUN'
   u32(view, 4, version)
@@ -30,6 +30,11 @@ function buildChunPacket(version, overrides = {}) {
   u32(view, 36, overrides.height ?? 1088)
   u32(view, 40, overrides.pixelFormat ?? 0x32315559)
   u32(view, 44, overrides.framesSaved ?? 0)
+  // timestamp_us (u64) @ 48, frame_duration_us @ 56 — left zero
+  // corner_block_size @ 60, num_corner_sets @ 64, reserved @ 66 — zero (no block)
+  // v5 focus metadata
+  view.setFloat32(68, overrides.lensPosition ?? 0, true)
+  view.setUint8(72, overrides.afState ?? 0xFF)
   return buf
 }
 
@@ -55,15 +60,15 @@ describe('Protocol version rejection', () => {
     await new Promise((resolve) => wss.close(resolve))
   })
 
-  it('drops frames with version != 2', async () => {
+  it('drops frames with version != 5', async () => {
     wss.on('connection', (ws) => {
       ws.on('message', (data, isBinary) => {
         if (isBinary) return
         const msg = JSON.parse(data.toString())
         if (msg.cmd === 'discover') {
           ws.send(JSON.stringify({ type: 'discovery', cameras: [{ id: 0, type: 'FAKE' }] }))
-          // Send a v1 CHUN header-only frame — the manager must reject.
-          ws.send(buildChunPacket(1), { binary: true })
+          // Send a v4 CHUN header-only frame — the manager must reject.
+          ws.send(buildChunPacket(4), { binary: true })
         }
       })
     })
@@ -84,14 +89,14 @@ describe('Protocol version rejection', () => {
     expect(frameSeen).toBe(false)
   }, 10000)
 
-  it('accepts frames with version 2 (header-only)', async () => {
+  it('accepts frames with version 5 (header-only) and parses focus metadata', async () => {
     wss.on('connection', (ws) => {
       ws.on('message', (data, isBinary) => {
         if (isBinary) return
         const msg = JSON.parse(data.toString())
         if (msg.cmd === 'discover') {
           ws.send(JSON.stringify({ type: 'discovery', cameras: [{ id: 0, type: 'FAKE' }] }))
-          ws.send(buildChunPacket(2), { binary: true })
+          ws.send(buildChunPacket(5, { lensPosition: 4.5, afState: 2 }), { binary: true })
         }
       })
     })
@@ -109,5 +114,7 @@ describe('Protocol version rejection', () => {
     expect(frame.width).toBe(1456)
     expect(frame.height).toBe(1088)
     expect(frame.data.length).toBe(0)
+    expect(frame.lensPosition).toBeCloseTo(4.5, 5)
+    expect(frame.afState).toBe(2)
   }, 10000)
 })

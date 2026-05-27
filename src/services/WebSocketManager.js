@@ -181,10 +181,10 @@ export class WebSocketManager extends EventEmitter {
   }
 
   handleChunkStart(data) {
-    // Protocol v4: ChunkStartMarker (8) + ChunkHeader (60) = 68 bytes minimum,
+    // Protocol v5: ChunkStartMarker (8) + ChunkHeader (68) = 76 bytes minimum,
     // plus an optional variable-size CornerBlock appended in the same message
     // when the server's save mode is `checkerboard` or `checkerboard2x2`.
-    const MIN_SIZE = 68
+    const MIN_SIZE = 76
     if (data.byteLength < MIN_SIZE) {
       this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected at least ${MIN_SIZE}`)
       return
@@ -193,8 +193,8 @@ export class WebSocketManager extends EventEmitter {
     const view = new DataView(data)
     const version = view.getUint32(4, true)
 
-    if (version !== 4) {
-      this.logger.error(`Unsupported chunk version: ${version} (expected 4)`)
+    if (version !== 5) {
+      this.logger.error(`Unsupported chunk version: ${version} (expected 5)`)
       return
     }
 
@@ -217,6 +217,12 @@ export class WebSocketManager extends EventEmitter {
     const cornerBlockSize = view.getUint32(60, true)
     const numCornerSets   = view.getUint16(64, true)
     // reserved at offset 66 (uint16), unused
+    // v5 additions: per-frame focus metadata reported by the libcamera IPA.
+    // lensPosition is in dioptres (0 = infinity); NaN means the server had no
+    // LensPosition for the frame. afState is the libcamera AfState enum
+    // (0=Idle, 1=Scanning, 2=Focused, 3=Failed); 0xFF means not reported.
+    const lensPosition = view.getFloat32(68, true)
+    const afState      = view.getUint8(72)
 
     if (data.byteLength !== MIN_SIZE + cornerBlockSize) {
       this.logger.error(
@@ -233,14 +239,15 @@ export class WebSocketManager extends EventEmitter {
       this.updateFrameStats(cameraId)
       this.updateServerFpsStats(cameraId, timestampUs, frameDurationUs, frameId)
       this.emitFrame(cameraId, frameId, width, height, bytesPerLine,
-                     new Uint8Array(0), pixelFormat, framesSaved, cornerSets)
+                     new Uint8Array(0), pixelFormat, framesSaved, cornerSets,
+                     lensPosition, afState)
       return
     }
 
     this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
 
     this.chunkBuffers.set(frameUuid, {
-      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs, cornerSets },
+      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs, cornerSets, lensPosition, afState },
       chunks: new Array(totalChunks),
       receivedChunks: 0,
       startTime: performance.now()
@@ -366,7 +373,9 @@ export class WebSocketManager extends EventEmitter {
         frameData,
         buffer.header.pixelFormat,
         buffer.header.framesSaved,
-        buffer.header.cornerSets
+        buffer.header.cornerSets,
+        buffer.header.lensPosition,
+        buffer.header.afState
       )
 
       // Clean up
@@ -508,7 +517,8 @@ export class WebSocketManager extends EventEmitter {
   }
 
   emitFrame(cameraId, frameId, width, height, bytesPerLine, data,
-            pixelFormat = 0, framesSaved = 0, cornerSets = []) {
+            pixelFormat = 0, framesSaved = 0, cornerSets = [],
+            lensPosition = NaN, afState = 0xFF) {
     this.emit('frame', {
       serverIndex: this.serverIndex,
       cameraId,
@@ -520,6 +530,8 @@ export class WebSocketManager extends EventEmitter {
       pixelFormat,
       framesSaved,
       cornerSets,
+      lensPosition,
+      afState,
       isHeaderOnly: data.length === 0
     })
   }

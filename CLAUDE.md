@@ -50,9 +50,9 @@ npm run preview
 - `start_stream`/`stop_stream`: Control per-camera streaming
 - `set_save_mode`: Configure frame saving behavior
 
-**Binary Messages (protocol v4)**:
-- `ChunkStartMarker` (8 bytes): `magic = 'CHUN'`, `version = 4`.
-- `ChunkHeader` (60 bytes) follows the marker in the same WS message: frame_uuid, frame_id, camera_id, total_chunks, total_size, bytes_per_line, width, height, pixel_format, frames_saved, timestamp_us, frame_duration_us, **corner_block_size (u32), num_corner_sets (u16), reserved (u16)**.
+**Binary Messages (protocol v5)**:
+- `ChunkStartMarker` (8 bytes): `magic = 'CHUN'`, `version = 5`.
+- `ChunkHeader` (68 bytes) follows the marker in the same WS message: frame_uuid, frame_id, camera_id, total_chunks, total_size, bytes_per_line, width, height, pixel_format, frames_saved, timestamp_us, frame_duration_us, corner_block_size (u32), num_corner_sets (u16), reserved (u16), **lens_position (f32, dioptres, NaN if unavailable), af_state (u8: 0=Idle/1=Scanning/2=Focused/3=Failed, 0xFF if unavailable), reserved2 (u8[3])**. The per-frame focus metadata is shown on `CameraView.vue`'s image-mode hover overlay (not the header-only big display).
 - Optional `CornerBlock` (variable, present when `num_corner_sets > 0`) appended to that same message: `num_corner_sets × (CornerSetHeader{set_id u8, flags u8, num_corners u16} + num_corners × {float x, float y})`. Coordinates are in full-frame Y-plane pixel space; the renderer overlays them 1:1 on the canvas. The server emits a corner block only when the save mode is `checkerboard` or `checkerboard2x2` and at least one board was detected on that exact frame.
 - `ChunkData` packets carry the frame payload (YUV420 main stream).
 

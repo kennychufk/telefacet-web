@@ -40,6 +40,14 @@
         <span class="fps-unit">fps</span>
       </div>
       <div class="cam-label">cam{{ paddedId }}</div>
+      <div
+        v-if="streaming"
+        class="focus-info"
+        :title="`Per-frame focus from the libcamera IPA (protocol v5).\nLens position in dioptres (0 = infinity); AF state from continuous/auto/manual focus.`"
+      >
+        <span class="focus-lens">{{ lensDisplay }}</span>
+        <span class="focus-af" :class="afClass">{{ afDisplay }}</span>
+      </div>
     </div>
 
     <!-- Header-only big display -->
@@ -78,6 +86,8 @@ const canvas = ref(null)
 const overlayCanvas = ref(null)
 const hovered = ref(false)
 const latestFrameId = ref(0)
+const latestLensPosition = ref(NaN)
+const latestAfState = ref(0xFF)
 
 let debayer = null
 let overlayCtx = null
@@ -98,6 +108,23 @@ const canvasHeight = computed(() => store.config?.camera_config?.height || 1088)
 const streaming = computed(() => props.camera.streaming)
 const isHeaderOnlyMode = computed(() => store.headerOnlyMode)
 const paddedId = computed(() => String(props.camera.globalId).padStart(2, '0'))
+
+// Per-frame focus metadata (protocol v5). lensPosition is in dioptres
+// (0 = infinity); NaN means the server reported none for the frame. afState is
+// the libcamera AfState enum; 0xFF means not reported.
+const AF_STATES = {
+  0: { label: 'idle', cls: 'af-idle' },
+  1: { label: 'focusing', cls: 'af-focusing' },
+  2: { label: 'focused', cls: 'af-focused' },
+  3: { label: 'failed', cls: 'af-failed' },
+}
+const lensDisplay = computed(() =>
+  Number.isNaN(latestLensPosition.value)
+    ? '— D'
+    : `${latestLensPosition.value.toFixed(2)} D`
+)
+const afDisplay = computed(() => (AF_STATES[latestAfState.value]?.label) ?? 'n/a')
+const afClass = computed(() => (AF_STATES[latestAfState.value]?.cls) ?? 'af-na')
 
 onMounted(() => {
   if (!canvas.value) return
@@ -125,6 +152,8 @@ function setupFrameListener() {
   frameHandler = (data) => {
     if (data.globalCameraId !== props.camera.globalId) return
     latestFrameId.value = data.frameId
+    if (typeof data.lensPosition === 'number') latestLensPosition.value = data.lensPosition
+    if (typeof data.afState === 'number') latestAfState.value = data.afState
 
     if (data.isHeaderOnly || data.data.length === 0) {
       if (!blackFrameRendered || !store.headerOnlyMode) {
@@ -237,6 +266,8 @@ watch(streaming, (on) => {
       animationFrameId = null
     }
     latestFrameId.value = 0
+    latestLensPosition.value = NaN
+    latestAfState.value = 0xFF
     clearOverlay()
   }
 })
@@ -318,6 +349,33 @@ watch(streaming, (on) => {
   color: rgba(255, 255, 255, 0.7);
   letter-spacing: 0.04em;
 }
+
+/* Per-frame focus metadata (lens position + AF state), bottom-right opposite
+   the cam label. Only present in image mode's hover overlay — never on the
+   header-only big display. */
+.hover-overlay .focus-info {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.focus-lens { color: rgba(255, 255, 255, 0.8); }
+.focus-af {
+  margin-left: 0.5em;
+  text-transform: uppercase;
+  font-size: 0.85em;
+  letter-spacing: 0.06em;
+}
+.focus-af.af-focusing { color: var(--hw-fps); }
+.focus-af.af-focused  { color: var(--live); }
+.focus-af.af-failed   { color: #ff5c5c; }
+.focus-af.af-idle     { color: var(--text-sec); }
+.focus-af.af-na       { color: var(--text-sec); opacity: 0.6; }
 
 /* Header-only big display */
 .header-display {
