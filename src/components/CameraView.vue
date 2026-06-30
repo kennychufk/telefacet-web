@@ -50,6 +50,19 @@
       </div>
     </div>
 
+    <!-- Saved-frame counter (checkerboard / checkerboard2x2 modes only).
+         Always visible in image mode — calibration capture progress should be
+         readable at a glance, not gated behind hover. -->
+    <div
+      v-if="!isHeaderOnlyMode && streaming && showSavedCount"
+      class="saved-badge"
+      :title="`Frames saved to disk on the server (${saveMode} mode)`"
+    >
+      <span class="saved-icon">●</span>
+      <span class="saved-count">{{ framesSaved.toLocaleString() }}</span>
+      <span class="saved-label">saved</span>
+    </div>
+
     <!-- Header-only big display -->
     <div v-if="isHeaderOnlyMode && streaming" class="header-display">
       <div class="cam-label-big">cam{{ paddedId }}</div>
@@ -63,6 +76,14 @@
       </div>
       <div class="big-fps-unit">fps</div>
       <div class="frame-id">#{{ latestFrameId.toLocaleString() }}</div>
+      <div
+        v-if="showSavedCount"
+        class="saved-frames-big"
+        :title="`Frames saved to disk on the server (${saveMode} mode)`"
+      >
+        <span class="saved-frames-big-count">{{ framesSaved.toLocaleString() }}</span>
+        <span class="saved-frames-big-label">saved</span>
+      </div>
     </div>
 
     <!-- No signal -->
@@ -108,6 +129,16 @@ const canvasHeight = computed(() => store.config?.camera_config?.height || 1088)
 const streaming = computed(() => props.camera.streaming)
 const isHeaderOnlyMode = computed(() => store.headerOnlyMode)
 const paddedId = computed(() => String(props.camera.globalId).padStart(2, '0'))
+
+// Saved-frame counter. The server reports a running per-camera frames_saved
+// count in every frame header (stored as camera.framesSaved). Only surfaced in
+// the checkerboard / checkerboard2x2 save modes, where it doubles as live
+// calibration-capture progress.
+const saveMode = computed(() => store.config?.frame_saving?.mode)
+const showSavedCount = computed(
+  () => saveMode.value === 'checkerboard' || saveMode.value === 'checkerboard2x2'
+)
+const framesSaved = computed(() => props.camera.framesSaved || 0)
 
 // Per-frame focus metadata (protocol v5). lensPosition is in dioptres
 // (0 = infinity); NaN means the server reported none for the frame. afState is
@@ -422,6 +453,42 @@ watch(streaming, (on) => {
   font-size: clamp(9px, 2.5cqw, 13px);
   color: var(--text-sec);
 }
+
+/* Saved-frame count line in the header-only big display */
+.saved-frames-big {
+  font-family: var(--font-mono);
+  font-size: clamp(9px, 2.5cqw, 13px);
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.saved-frames-big-count { color: var(--live); font-weight: 600; }
+.saved-frames-big-label { color: var(--text-sec); margin-left: 0.4em; font-size: 0.85em; }
+
+/* Always-visible saved-frame badge (image mode, checkerboard modes). Sits
+   top-left — the one corner the hover overlay leaves free (fps top-right,
+   cam label bottom-left, focus bottom-right). The translucent pill keeps it
+   legible over any frame content. */
+.saved-badge {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.saved-badge .saved-icon { color: var(--live); font-size: 0.7em; }
+.saved-badge .saved-count { color: var(--live); font-weight: 600; }
+.saved-badge .saved-label { color: var(--text-sec); font-size: 0.85em; }
 
 /* No signal */
 .no-signal {
