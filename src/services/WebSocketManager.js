@@ -447,6 +447,17 @@ export class WebSocketManager extends EventEmitter {
           })
           break
 
+        case 'lens_position_limits':
+          // min/max/default are in dioptres, or null when the module has no
+          // focuser (server reports NaN → JSON null).
+          this.emit('lens-position-limits', {
+            serverIndex: this.serverIndex,
+            min: message.min,
+            max: message.max,
+            default: message.default
+          })
+          break
+
         default:
           this.logger.warn('Unknown message type:', message.type)
       }
@@ -580,6 +591,11 @@ export class WebSocketManager extends EventEmitter {
   // Returns asynchronously via 'frame-duration-limits' event
   getFrameDurationLimits() {
     return this.send({ cmd: 'get_frame_duration_limits' })
+  }
+
+  // Returns asynchronously via 'lens-position-limits' event
+  getLensPositionLimits() {
+    return this.send({ cmd: 'get_lens_position_limits' })
   }
 
   handleReconnect() {
@@ -771,6 +787,7 @@ export class MultiServerManager extends EventEmitter {
     manager.on('error', (...args) => this.emit('error', ...args))
     manager.on('reconnect-failed', (...args) => this.emit('reconnect-failed', ...args))
     manager.on('frame-duration-limits', (...args) => this.emit('frame-duration-limits', ...args))
+    manager.on('lens-position-limits', (...args) => this.emit('lens-position-limits', ...args))
 
     this.servers.set(index, manager)
     return manager
@@ -887,6 +904,16 @@ export class MultiServerManager extends EventEmitter {
     for (const server of this.servers.values()) {
       if (server.connected) {
         return server.getFrameDurationLimits()
+      }
+    }
+    return false
+  }
+
+  // All cameras share the same sensor → ask the first connected server.
+  getLensPositionLimits() {
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        return server.getLensPositionLimits()
       }
     }
     return false

@@ -34,6 +34,10 @@ export const useCameraStore = defineStore('camera', {
     frameDurationUs: -1,
     // Sensor limits populated by get_frame_duration_limits: { min, max, current }
     frameDurationLimits: null,
+    // Hardware lens range (dioptres) populated by get_lens_position_limits:
+    // { min, max, default }. null until fetched; fields null on a fixed-focus
+    // module. The Focus UI falls back to a default range when this is null.
+    lensPositionLimits: null,
 
     // Error handling
     lastError: null
@@ -216,6 +220,14 @@ export const useCameraStore = defineStore('camera', {
           current: data.current
         }
       })
+
+      manager.on('lens-position-limits', (data) => {
+        this.lensPositionLimits = {
+          min: data.min,
+          max: data.max,
+          default: data.default
+        }
+      })
     },
 
     updateCameraList() {
@@ -254,6 +266,7 @@ export const useCameraStore = defineStore('camera', {
         this.camerasConfigured = true
         // Limits come from ControlInfoMap, only valid once configured.
         this.serverManager.getFrameDurationLimits()
+        this.serverManager.getLensPositionLimits()
         return true
       } catch (error) {
         this.lastError = 'Failed to configure cameras'
@@ -445,6 +458,12 @@ export const useCameraStore = defineStore('camera', {
     async fetchFrameDurationLimits() {
       if (!this.hasConnectedServers) return false
       return this.serverManager.getFrameDurationLimits()
+    },
+
+    // Result arrives asynchronously and populates this.lensPositionLimits.
+    async fetchLensPositionLimits() {
+      if (!this.hasConnectedServers) return false
+      return this.serverManager.getLensPositionLimits()
     },
 
     // lensPosition < 0 engages continuous AF; >= 0 sets manual focus at that dioptre value

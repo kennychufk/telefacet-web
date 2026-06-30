@@ -46,14 +46,14 @@
 
       <div class="range-labels">
         <span>∞</span>
-        <span>10 dpt</span>
+        <span>{{ maxLabel }} dpt</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useCameraStore } from '../stores/cameraStore'
 
 defineProps({
@@ -62,25 +62,62 @@ defineProps({
 
 const store = useCameraStore()
 
-const MIN = 0
-const MAX = 10
-const STEP = 0.1
+const STEP = 0.05
+// Decimal places matching STEP's precision (0.05 → 2), used for rounding and
+// display so typed/stepped values snap cleanly onto the slider grid.
+const DECIMALS = 2
+// Range (dioptres) used until the server reports the hardware LensPosition
+// range via get_lens_position_limits, or when a field is null (fixed-focus
+// module / not yet fetched).
+const FALLBACK_MIN = 0
+const FALLBACK_MAX = 10
+
+// Real hardware limits, with safe fallbacks for null/non-finite fields.
+const MIN = computed(() => {
+  const v = store.lensPositionLimits?.min
+  return Number.isFinite(v) ? v : FALLBACK_MIN
+})
+const MAX = computed(() => {
+  const v = store.lensPositionLimits?.max
+  return Number.isFinite(v) ? v : FALLBACK_MAX
+})
+// Trim a trailing ".0" so a whole-number max reads "10 dpt", not "10.0 dpt".
+const maxLabel = computed(() => MAX.value.toFixed(1).replace(/\.0$/, ''))
 
 const mode = ref(store.focusMode)
 const lensPos = ref(store.lensPosition)
-const inputVal = ref(store.lensPosition.toFixed(1))
+const inputVal = ref(store.lensPosition.toFixed(DECIMALS))
 
-const pct = computed(() => (lensPos.value / MAX) * 100)
+const pct = computed(() => {
+  const span = MAX.value - MIN.value
+  return span > 0 ? ((lensPos.value - MIN.value) / span) * 100 : 0
+})
 
 function clamp(v) {
-  return Math.max(MIN, Math.min(MAX, v))
+  return Math.max(MIN.value, Math.min(MAX.value, v))
 }
 
+// Snap to the nearest STEP and clean up float error (0.05 * 3 → 0.15).
+function quantize(v) {
+  return Number((Math.round(v / STEP) * STEP).toFixed(DECIMALS))
+}
+
+// When real limits arrive (or shrink) and the current position falls outside
+// the new range, pull it back in. Only push to the server if we're actually
+// in manual mode — clamping the display shouldn't trigger a focus command.
+watch([MIN, MAX], () => {
+  const clamped = quantize(clamp(lensPos.value))
+  if (clamped !== lensPos.value) {
+    lensPos.value = clamped
+    inputVal.value = clamped.toFixed(DECIMALS)
+    if (mode.value === 'manual') store.setLensPosition(clamped)
+  }
+})
+
 function applyLens(raw) {
-  const v = clamp(parseFloat(raw) || 0)
-  const rounded = Math.round(v * 10) / 10
+  const rounded = quantize(clamp(parseFloat(raw) || 0))
   lensPos.value = rounded
-  inputVal.value = rounded.toFixed(1)
+  inputVal.value = rounded.toFixed(DECIMALS)
   store.setLensPosition(rounded)
 }
 
