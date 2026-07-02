@@ -100,4 +100,4 @@ One quality mode available for now (will be extended in the future):
 
 The debayer handles 10-bit SRGGB10P packed format where 4 pixels are packed into 5 bytes.
 
-The shader in `src/webgl/Debayer.js` rotates the rendered frame 180° relative to the raw buffer by setting `v_texCoord = vec2(1.0 - a_texCoord.x, 1.0 - a_texCoord.y)`. Any 2D overlay drawn on top in buffer coordinates (e.g. the checkerboard corner overlay in `CameraView.vue`) must apply the same flip — `(w - x, h - y)` — or it will land 180° off from the displayed image.
+The shader in `src/webgl/Debayer.js` renders the frame in the raw buffer's native orientation (`v_texCoord = a_texCoord`, no rotation). 2D overlays drawn on top in buffer coordinates (e.g. the checkerboard corner overlay in `CameraView.vue`) map 1:1 — corner `(x, y)` is drawn at canvas `(x, y)`.

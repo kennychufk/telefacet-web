@@ -241,17 +241,16 @@ function drawCornerOverlay(cornerSets) {
   overlayCtx.clearRect(0, 0, w, h)
   if (!cornerSets || cornerSets.length === 0) return
 
-  // The Debayer shader (src/webgl/Debayer.js) flips both texture coords —
-  // `v_texCoord = vec2(1.0 - x, 1.0 - y)` — which renders the frame rotated
-  // 180° from the raw YUV buffer the server's corner coordinates live in.
-  // Mirror that flip here so corner (x, y) lands at the same on-screen
-  // position as buffer pixel (x, y) after the shader's rotation.
+  // The Debayer shader (src/webgl/Debayer.js) renders the frame in the raw
+  // YUV buffer's native orientation (no flip), and the server's corner
+  // coordinates live in that same full-frame Y-plane pixel space, so corner
+  // (x, y) maps 1:1 onto canvas pixel (x, y).
   overlayCtx.fillStyle = CORNER_COLOR
   for (const set of cornerSets) {
     if (!set.corners) continue
     for (const c of set.corners) {
       overlayCtx.beginPath()
-      overlayCtx.arc(w - c.x, h - c.y, CORNER_RADIUS_PX, 0, Math.PI * 2)
+      overlayCtx.arc(c.x, c.y, CORNER_RADIUS_PX, 0, Math.PI * 2)
       overlayCtx.fill()
     }
   }

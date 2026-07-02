@@ -1,4 +1,4 @@
-// src/webgl/Debayer.js - YUV420 → RGB renderer with BT.601 conversion and 180° rotation
+// src/webgl/Debayer.js - YUV420 → RGB renderer with BT.601 conversion
 
 const vertexShaderSource = `
 attribute vec2 a_position;
@@ -7,8 +7,8 @@ varying vec2 v_texCoord;
 
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
-    // Rotate 180° by inverting both texture coordinates
-    v_texCoord = vec2(1.0 - a_texCoord.x, 1.0 - a_texCoord.y);
+    // Render in the raw buffer's native orientation (no rotation).
+    v_texCoord = a_texCoord;
 }
 `
 
