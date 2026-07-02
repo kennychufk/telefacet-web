@@ -29,7 +29,7 @@ npm run preview
 
 - **WebSocketManager.js**: Handles WebSocket connections to individual servers, manages frame parsing, and provides camera control commands
 - **MultiServerManager**: Coordinates multiple WebSocket servers and provides global camera ID mapping
-- **ConfigLoader.js**: Parses and validates YAML configuration files with server addresses, camera settings, and AWB gains
+- **ConfigLoader.js**: Parses and validates YAML configuration files with server addresses and camera settings
 - **cameraStore.js**: Pinia store managing application state, server connections, and camera lifecycle
 - **Debayer.js**: WebGL-based Bayer demosaicing
 
@@ -62,7 +62,6 @@ YAML files define:
 - Server addresses (WebSocket URLs)
 - Camera configuration (resolution, v4l2 buffers)
 - Frame saving options (none/buffer/batch/checkerboard/checkerboard2x2 modes)
-- Per-camera AWB gains for color correction
 
 #### Frame Saving Modes
 

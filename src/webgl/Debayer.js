@@ -129,10 +129,8 @@ export class Debayer {
         return shader
     }
 
-    // No-ops retained so call sites that still set quality/AWB don't throw
+    // No-op retained so call sites that still set quality don't throw
     setQuality() {}
-    setAWBGains() {}
-    setFrameAWBGains() {}
 
     processFrame(frameData, width, height, bytesPerLine) {
         const gl = this.gl

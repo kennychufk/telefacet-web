@@ -155,9 +155,6 @@ export class ConfigLoader {
       }
     }
 
-    // awb_gains is silently ignored in protocol v2 (AWB is applied by the ISP)
-    delete config.awb_gains
-
     return config
   }
 
@@ -210,8 +207,7 @@ export class ConfigLoader {
         checkerboard_cols: 11,
         checkerboard_full_res_detection: false,
         checkerboard_num_threads: 4
-      },
-      // awb_gains removed — ISP applies AWB automatically in protocol v2
+      }
     }
   }
 }
