@@ -45,7 +45,7 @@ npm run preview
 
 **Text Messages (JSON)**:
 - `discover`: Request camera discovery
-- `configure`: Set camera parameters (width, height, crop settings)
+- `configure`: Set camera parameters (width, height)
 - `start_cameras`/`stop_cameras`: Control camera lifecycle
 - `start_stream`/`stop_stream`: Control per-camera streaming
 - `set_save_mode`: Configure frame saving behavior
@@ -60,7 +60,7 @@ npm run preview
 
 YAML files define:
 - Server addresses (WebSocket URLs)
-- Camera configuration (resolution, cropping, v4l2 buffers)
+- Camera configuration (resolution, v4l2 buffers)
 - Frame saving options (none/buffer/batch/checkerboard/checkerboard2x2 modes)
 - Per-camera AWB gains for color correction
 

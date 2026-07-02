@@ -632,11 +632,7 @@ export class WebSocketManager extends EventEmitter {
       cmd: 'configure',
       params: {
         width: config.width,
-        height: config.height,
-        crop_width: config.crop_width,
-        crop_height: config.crop_height,
-        crop_left: config.crop_left,
-        crop_top: config.crop_top
+        height: config.height
       }
     })
   }

@@ -90,7 +90,7 @@ defineEmits(['advance', 'retreat'])
 // that starts streams for any cameras that aren't already streaming.
 const stages = [
   { key: 'connected',  label: 'Discover',  sub: 'cameras found',     action: 'Configure' },
-  { key: 'configured', label: 'Configure', sub: 'resolution & crop', action: 'Start' },
+  { key: 'configured', label: 'Configure', sub: 'resolution',        action: 'Start' },
   { key: 'running',    label: 'Start',     sub: 'pipeline active',   action: 'Stream' }
 ]
 

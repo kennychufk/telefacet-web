@@ -64,7 +64,7 @@ export class ConfigLoader {
       throw new Error('Configuration must include "camera_config"')
     }
 
-    const requiredCameraFields = ['width', 'height', 'crop_width', 'crop_height', 'crop_left', 'crop_top']
+    const requiredCameraFields = ['width', 'height']
     requiredCameraFields.forEach(field => {
       if (typeof config.camera_config[field] !== 'number') {
         throw new Error(`camera_config.${field} must be a number`)
@@ -197,10 +197,6 @@ export class ConfigLoader {
       camera_config: {
         width: 1456,
         height: 1088,
-        crop_width: 1456,
-        crop_height: 1088,
-        crop_left: 0,
-        crop_top: 0,
         v4l2_buffers: 4
       },
       frame_saving: {
