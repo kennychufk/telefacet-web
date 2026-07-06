@@ -68,6 +68,7 @@
           >
             <LiveDot :on="srv.connected" color="var(--live)" />
             <span class="server-addr">{{ srv.address.replace(/^wss?:\/\//, '') }}</span>
+            <span v-if="srv.sensor" class="server-sensor">{{ srv.sensor }}</span>
             <span class="server-cams">{{ srv.cameras }}×</span>
           </div>
         </section>
@@ -386,6 +387,13 @@ async function toggleHeaderOnly() {
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
+}
+
+.server-sensor {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-sec);
+  flex-shrink: 0;
 }
 
 .server-cams {

@@ -17,10 +17,15 @@ const createLogger = (prefix) => {
 }
 
 export class WebSocketManager extends EventEmitter {
-  constructor(serverAddress, serverIndex) {
+  constructor(serverAddress, serverIndex, options = {}) {
     super()
     this.address = serverAddress
     this.serverIndex = serverIndex
+    // Per-server sensor type and resolution (optional — omitted fields fall
+    // back to the server's own defaults). Different servers may run
+    // different sensors, but every camera on one server shares the same one.
+    this.sensor = options.sensor
+    this.cameraConfig = options.cameraConfig || {}
     this.ws = null
     this.connected = false
     this.reconnectAttempts = 0
@@ -619,7 +624,11 @@ export class WebSocketManager extends EventEmitter {
   }
 
   discoverCameras() {
-    return this.send({ cmd: 'discover' })
+    const command = { cmd: 'discover' }
+    if (this.sensor) {
+      command.params = { sensor: this.sensor }
+    }
+    return this.send(command)
   }
 
   getState() {
@@ -734,9 +743,9 @@ export class MultiServerManager extends EventEmitter {
     this.logger = createLogger('MultiServerManager')
   }
 
-  addServer(address, index) {
+  addServer(address, index, options = {}) {
     this.logger.info(`Adding server ${index} at ${address}`)
-    const manager = new WebSocketManager(address, index)
+    const manager = new WebSocketManager(address, index, options)
 
     // Forward events with global camera IDs
     manager.on('cameras-discovered', (data) => {
@@ -832,11 +841,11 @@ export class MultiServerManager extends EventEmitter {
     }
   }
 
-  configureAll(config) {
+  configureAll() {
     this.logger.info('Configuring all servers')
     for (const server of this.servers.values()) {
       if (server.connected) {
-        server.configureCameras(config)
+        server.configureCameras(server.cameraConfig)
       }
     }
   }

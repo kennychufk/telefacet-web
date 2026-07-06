@@ -124,8 +124,9 @@ let frameHandler = null
 const CORNER_COLOR = '#00FF80'
 const CORNER_RADIUS_PX = 6
 
-const canvasWidth = computed(() => store.config?.camera_config?.width || 1456)
-const canvasHeight = computed(() => store.config?.camera_config?.height || 1088)
+const ownServer = computed(() => store.servers.find(s => s.index === props.camera.serverIndex))
+const canvasWidth = computed(() => ownServer.value?.width || 1456)
+const canvasHeight = computed(() => ownServer.value?.height || 1088)
 const streaming = computed(() => props.camera.streaming)
 const isHeaderOnlyMode = computed(() => store.headerOnlyMode)
 const paddedId = computed(() => String(props.camera.globalId).padStart(2, '0'))

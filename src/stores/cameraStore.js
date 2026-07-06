@@ -112,6 +112,9 @@ export const useCameraStore = defineStore('camera', {
       this.servers = this.config.servers.map((server, index) => ({
         index,
         address: server.address,
+        sensor: server.sensor,
+        width: server.width,
+        height: server.height,
         connected: false,
         cameras: 0,
         serverState: 'unknown'
@@ -119,7 +122,10 @@ export const useCameraStore = defineStore('camera', {
 
       // Add servers to manager
       this.servers.forEach(server => {
-        this.serverManager.addServer(server.address, server.index)
+        this.serverManager.addServer(server.address, server.index, {
+          sensor: server.sensor,
+          cameraConfig: { width: server.width, height: server.height }
+        })
       })
 
       // Connect to all servers
@@ -250,8 +256,7 @@ export const useCameraStore = defineStore('camera', {
       if (!this.canConfigure) return false
 
       try {
-        const cameraConfig = this.config.camera_config
-        this.serverManager.configureAll(cameraConfig)
+        this.serverManager.configureAll()
 
         // Set save mode as part of configuration (only if not already set)
         if (!this.saveModeConfigured) {

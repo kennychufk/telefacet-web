@@ -44,7 +44,7 @@ npm run preview
 ### WebSocket Protocol
 
 **Text Messages (JSON)**:
-- `discover`: Request camera discovery
+- `discover`: Request camera discovery; optional `params.sensor` selects which sensor model to enumerate (substring match against the sensor's libcamera model name, e.g. "imx519", "imx708"). The first `discover` call that matches at least one camera locks in that sensor for the rest of the server's process lifetime; a call that matches zero cameras doesn't lock anything and can be retried with a different `sensor`.
 - `configure`: Set camera parameters (width, height)
 - `start_cameras`/`stop_cameras`: Control camera lifecycle
 - `start_stream`/`stop_stream`: Control per-camera streaming
@@ -59,9 +59,8 @@ npm run preview
 ### Configuration Format
 
 YAML files define:
-- Server addresses (WebSocket URLs)
-- Camera configuration (resolution, v4l2 buffers)
-- Frame saving options (none/buffer/batch/checkerboard/checkerboard2x2 modes)
+- Servers: one entry per server, each with a WebSocket URL (`address`) and its own optional `sensor` (model substring, e.g. "imx519", "imx708") and resolution (`width`/`height`). A client can talk to servers running different sensor types at different resolutions; within one server, every camera shares the same sensor and resolution. Omitted fields fall back to that server's own defaults.
+- Frame saving options (none/buffer/batch/checkerboard/checkerboard2x2 modes), shared across all servers
 
 #### Frame Saving Modes
 

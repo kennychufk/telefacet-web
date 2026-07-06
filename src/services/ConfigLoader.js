@@ -42,7 +42,11 @@ export class ConfigLoader {
       throw new Error('At least one server must be specified')
     }
 
-    // Validate server addresses
+    // Validate server addresses and per-server camera settings. Sensor type
+    // and resolution are per-server (a client may talk to servers running
+    // different sensors), but identical across every camera on one server.
+    // Both are optional — an omitted field falls back to the connected
+    // server's own default (currently "imx519" / 2328x1748).
     config.servers.forEach((server, index) => {
       if (!server.address) {
         throw new Error(`Server ${index} must have an address`)
@@ -57,24 +61,17 @@ export class ConfigLoader {
       } catch (e) {
         throw new Error(`Server ${index} has invalid address format: ${server.address}`)
       }
-    })
 
-    // Validate camera configuration
-    if (!config.camera_config) {
-      throw new Error('Configuration must include "camera_config"')
-    }
-
-    const requiredCameraFields = ['width', 'height']
-    requiredCameraFields.forEach(field => {
-      if (typeof config.camera_config[field] !== 'number') {
-        throw new Error(`camera_config.${field} must be a number`)
+      if (server.sensor !== undefined && typeof server.sensor !== 'string') {
+        throw new Error(`Server ${index} sensor must be a string`)
       }
-    })
 
-    // Set default v4l2_buffers if not specified
-    if (!config.camera_config.v4l2_buffers) {
-      config.camera_config.v4l2_buffers = 4
-    }
+      ;['width', 'height'].forEach(field => {
+        if (server[field] !== undefined && typeof server[field] !== 'number') {
+          throw new Error(`Server ${index} ${field} must be a number`)
+        }
+      })
+    })
 
     // Validate frame saving configuration
     if (!config.frame_saving) {
@@ -164,11 +161,6 @@ export class ConfigLoader {
     return this.config.servers.map(s => s.address)
   }
 
-  // Get camera configuration
-  getCameraConfig() {
-    return this.config ? this.config.camera_config : null
-  }
-
   // Get frame saving configuration
   getFrameSavingConfig() {
     return this.config ? this.config.frame_saving : null
@@ -188,14 +180,9 @@ export class ConfigLoader {
   static createExampleConfig() {
     return {
       servers: [
-        { address: 'ws://192.168.1.100:9001' },
-        { address: 'ws://192.168.1.101:9001' }
+        { address: 'ws://192.168.1.100:9001', sensor: 'imx519', width: 1456, height: 1088 },
+        { address: 'ws://192.168.1.101:9001', sensor: 'imx708', width: 1536, height: 864 }
       ],
-      camera_config: {
-        width: 1456,
-        height: 1088,
-        v4l2_buffers: 4
-      },
       frame_saving: {
         mode: 'none',
         output_dir: 'camera_frames',
