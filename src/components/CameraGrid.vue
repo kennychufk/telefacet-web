@@ -19,7 +19,7 @@ import { useCameraStore } from '../stores/cameraStore'
 import CameraView from './CameraView.vue'
 
 const store = useCameraStore()
-const cameras = computed(() => store.cameras)
+const cameras = computed(() => store.streamingCameras)
 
 const gridStyle = computed(() => {
   const n = cameras.value.length
