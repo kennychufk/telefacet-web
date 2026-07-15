@@ -284,8 +284,9 @@ export const useCameraStore = defineStore('camera', {
       if (!this.config) return false
 
       try {
-        const saveConfig = this.config.frame_saving
+        const saveConfig = this.config.processing
         const params = {
+          save_frames: saveConfig.save_frames,
           output_dir: saveConfig.output_dir,
           prepend_timestamp_to_dir: saveConfig.prepend_timestamp_to_dir,
           batch_size: saveConfig.batch_size,

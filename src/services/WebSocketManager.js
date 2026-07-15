@@ -715,7 +715,7 @@ export class WebSocketManager extends EventEmitter {
   setSaveMode(mode, params = {}) {
     this.logger.info(`Setting save mode to ${mode}`)
     return this.send({
-      cmd: 'set_save_mode',
+      cmd: 'set_process_mode',
       mode: mode,
       params: params
     })

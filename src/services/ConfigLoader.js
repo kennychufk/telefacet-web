@@ -73,10 +73,11 @@ export class ConfigLoader {
       })
     })
 
-    // Validate frame saving configuration
-    if (!config.frame_saving) {
-      config.frame_saving = {
+    // Validate frame-processing configuration
+    if (!config.processing) {
+      config.processing = {
         mode: 'none',
+        save_frames: true,
         output_dir: 'camera_frames',
         prepend_timestamp_to_dir: false,
         batch_size: 10,
@@ -85,92 +86,99 @@ export class ConfigLoader {
     }
 
     const validModes = ['none', 'buffer', 'batch', 'checkerboard', 'checkerboard2x2', 'aruco', 'aruco2x2']
-    if (!validModes.includes(config.frame_saving.mode)) {
-      throw new Error(`frame_saving.mode must be one of: ${validModes.join(', ')}`)
+    if (!validModes.includes(config.processing.mode)) {
+      throw new Error(`processing.mode must be one of: ${validModes.join(', ')}`)
+    }
+
+    // save_frames decouples detection from disk writing: false ⇒ detector modes
+    // still run and stream corners/markers, but no frames are saved. Defaults to
+    // true (preserves prior save-on-detect behaviour).
+    if (typeof config.processing.save_frames !== 'boolean') {
+      config.processing.save_frames = true
     }
 
     // Set defaults for common parameters
-    if (typeof config.frame_saving.output_dir !== 'string') {
-      config.frame_saving.output_dir = 'camera_frames'
+    if (typeof config.processing.output_dir !== 'string') {
+      config.processing.output_dir = 'camera_frames'
     }
 
     // Basic validation for output_dir
-    const outputDir = config.frame_saving.output_dir.trim()
+    const outputDir = config.processing.output_dir.trim()
     if (outputDir === '') {
-      throw new Error('frame_saving.output_dir cannot be empty')
+      throw new Error('processing.output_dir cannot be empty')
     }
 
     // Check for invalid characters (basic validation)
     const invalidChars = /[<>:"|?*\x00-\x1f]/
     if (invalidChars.test(outputDir)) {
-      throw new Error('frame_saving.output_dir contains invalid characters')
+      throw new Error('processing.output_dir contains invalid characters')
     }
 
     // Update the config with trimmed value
-    config.frame_saving.output_dir = outputDir
+    config.processing.output_dir = outputDir
 
     // Validate prepend_timestamp_to_dir
-    if (typeof config.frame_saving.prepend_timestamp_to_dir !== 'boolean') {
-      config.frame_saving.prepend_timestamp_to_dir = false
+    if (typeof config.processing.prepend_timestamp_to_dir !== 'boolean') {
+      config.processing.prepend_timestamp_to_dir = false
     }
 
-    if (typeof config.frame_saving.batch_size !== 'number') {
-      config.frame_saving.batch_size = 10
+    if (typeof config.processing.batch_size !== 'number') {
+      config.processing.batch_size = 10
     }
-    if (typeof config.frame_saving.writer_threads !== 'number') {
-      config.frame_saving.writer_threads = 4
+    if (typeof config.processing.writer_threads !== 'number') {
+      config.processing.writer_threads = 4
     }
 
     // Validate checkerboard-specific parameters if mode uses checkerboard detection
-    if (config.frame_saving.mode === 'checkerboard' ||
-        config.frame_saving.mode === 'checkerboard2x2') {
+    if (config.processing.mode === 'checkerboard' ||
+        config.processing.mode === 'checkerboard2x2') {
       // Set defaults for checkerboard parameters
-      if (typeof config.frame_saving.checkerboard_rows !== 'number') {
-        config.frame_saving.checkerboard_rows = 8
+      if (typeof config.processing.checkerboard_rows !== 'number') {
+        config.processing.checkerboard_rows = 8
       }
-      if (typeof config.frame_saving.checkerboard_cols !== 'number') {
-        config.frame_saving.checkerboard_cols = 11
+      if (typeof config.processing.checkerboard_cols !== 'number') {
+        config.processing.checkerboard_cols = 11
       }
-      if (typeof config.frame_saving.checkerboard_full_res_detection !== 'boolean') {
-        config.frame_saving.checkerboard_full_res_detection = false
+      if (typeof config.processing.checkerboard_full_res_detection !== 'boolean') {
+        config.processing.checkerboard_full_res_detection = false
       }
-      if (typeof config.frame_saving.checkerboard_num_threads !== 'number') {
-        config.frame_saving.checkerboard_num_threads = 4
+      if (typeof config.processing.checkerboard_num_threads !== 'number') {
+        config.processing.checkerboard_num_threads = 4
       }
 
       // Validate checkerboard dimensions (must be positive integers)
-      if (config.frame_saving.checkerboard_rows < 1 || !Number.isInteger(config.frame_saving.checkerboard_rows)) {
-        throw new Error('frame_saving.checkerboard_rows must be a positive integer')
+      if (config.processing.checkerboard_rows < 1 || !Number.isInteger(config.processing.checkerboard_rows)) {
+        throw new Error('processing.checkerboard_rows must be a positive integer')
       }
-      if (config.frame_saving.checkerboard_cols < 1 || !Number.isInteger(config.frame_saving.checkerboard_cols)) {
-        throw new Error('frame_saving.checkerboard_cols must be a positive integer')
+      if (config.processing.checkerboard_cols < 1 || !Number.isInteger(config.processing.checkerboard_cols)) {
+        throw new Error('processing.checkerboard_cols must be a positive integer')
       }
 
       // Validate thread count
-      if (config.frame_saving.checkerboard_num_threads < 1 || config.frame_saving.checkerboard_num_threads > 32) {
-        throw new Error('frame_saving.checkerboard_num_threads must be between 1 and 32')
+      if (config.processing.checkerboard_num_threads < 1 || config.processing.checkerboard_num_threads > 32) {
+        throw new Error('processing.checkerboard_num_threads must be between 1 and 32')
       }
     }
 
     // Validate aruco-specific parameters if mode uses ArUco marker detection.
     // aruco_num_threads applies only to aruco2x2 quadrant parallelism (clamped
     // [1,4] by the server); it's harmless for `aruco`.
-    if (config.frame_saving.mode === 'aruco' ||
-        config.frame_saving.mode === 'aruco2x2') {
+    if (config.processing.mode === 'aruco' ||
+        config.processing.mode === 'aruco2x2') {
       // Set defaults for aruco parameters
-      if (typeof config.frame_saving.aruco_full_res_detection !== 'boolean') {
-        config.frame_saving.aruco_full_res_detection = false
+      if (typeof config.processing.aruco_full_res_detection !== 'boolean') {
+        config.processing.aruco_full_res_detection = false
       }
-      if (typeof config.frame_saving.aruco_num_threads !== 'number') {
-        config.frame_saving.aruco_num_threads = 4
+      if (typeof config.processing.aruco_num_threads !== 'number') {
+        config.processing.aruco_num_threads = 4
       }
-      if (typeof config.frame_saving.aruco_corner_refine !== 'boolean') {
-        config.frame_saving.aruco_corner_refine = false
+      if (typeof config.processing.aruco_corner_refine !== 'boolean') {
+        config.processing.aruco_corner_refine = false
       }
 
       // Validate thread count (server clamps to [1,4] for quadrant parallelism)
-      if (config.frame_saving.aruco_num_threads < 1 || config.frame_saving.aruco_num_threads > 4) {
-        throw new Error('frame_saving.aruco_num_threads must be between 1 and 4')
+      if (config.processing.aruco_num_threads < 1 || config.processing.aruco_num_threads > 4) {
+        throw new Error('processing.aruco_num_threads must be between 1 and 4')
       }
     }
 
@@ -185,7 +193,7 @@ export class ConfigLoader {
 
   // Get frame saving configuration
   getFrameSavingConfig() {
-    return this.config ? this.config.frame_saving : null
+    return this.config ? this.config.processing : null
   }
 
   // Export current configuration to YAML
@@ -205,7 +213,7 @@ export class ConfigLoader {
         { address: 'ws://192.168.1.100:9001', sensor: 'imx519', width: 1456, height: 1088 },
         { address: 'ws://192.168.1.101:9001', sensor: 'imx708', width: 1536, height: 864 }
       ],
-      frame_saving: {
+      processing: {
         mode: 'none',
         output_dir: 'camera_frames',
         prepend_timestamp_to_dir: false,

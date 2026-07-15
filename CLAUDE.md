@@ -48,14 +48,14 @@ npm run preview
 - `configure`: Set camera parameters (width, height)
 - `start_cameras`/`stop_cameras`: Control camera lifecycle
 - `start_stream`/`stop_stream`: Control per-camera streaming
-- `set_save_mode`: Configure frame saving behavior
+- `set_process_mode`: Configure per-frame processing (detection and/or saving). `params.save_frames` (default `true`) toggles disk writing independently of the mode — `false` runs the detector and streams its corners/markers but writes nothing. (Formerly `set_save_mode`.)
 
 **Binary Messages (protocol v6)**:
 - `ChunkStartMarker` (8 bytes): `magic = 'CHUN'`, `version = 6`.
 - `ChunkHeader` (68 bytes) follows the marker in the same WS message: frame_uuid, frame_id, camera_id, total_chunks, total_size, bytes_per_line, width, height, pixel_format, frames_saved, timestamp_us, frame_duration_us, corner_block_size (u32), num_corner_sets (u16), reserved (u16), lens_position (f32, dioptres, NaN if unavailable), af_state (u8: 0=Idle/1=Scanning/2=Focused/3=Failed, 0xFF if unavailable), **detection_kind (u8: 0=none/1=checkerboard/2=aruco — offset 65, carved out of the old reserved2), reserved2 (u8[2])**. The per-frame focus metadata is shown on `CameraView.vue`'s image-mode hover overlay (not the header-only big display).
 - Optional **detection block** (variable, present when `num_corner_sets > 0`) appended to that same message. `detection_kind` selects its per-record layout — the block's total byte size is always `corner_block_size`:
-  - `detection_kind == 1` (checkerboard): `num_corner_sets × (CornerSetHeader{set_id u8, flags u8, num_corners u16} + num_corners × {float x, float y})`. Emitted only in `checkerboard` / `checkerboard2x2` save modes.
-  - `detection_kind == 2` (aruco): `num_corner_sets × (MarkerSetHeader{marker_id **i32 signed**, quadrant u8 (0 for `aruco`; row*2+col 0..3 for `aruco2x2`), flags u8, num_corners u16 (=4)} + 4 × {float x, float y})` → 40 bytes per marker. Dictionary is `DICT_APRILTAG_16h5` (ids 0..29); corners are clockwise from the marker's top-left. Emitted only in `aruco` / `aruco2x2` save modes.
+  - `detection_kind == 1` (checkerboard): `num_corner_sets × (CornerSetHeader{set_id u8, flags u8, num_corners u16} + num_corners × {float x, float y})`. Emitted only in `checkerboard` / `checkerboard2x2` process modes.
+  - `detection_kind == 2` (aruco): `num_corner_sets × (MarkerSetHeader{marker_id **i32 signed**, quadrant u8 (0 for `aruco`; row*2+col 0..3 for `aruco2x2`), flags u8, num_corners u16 (=4)} + 4 × {float x, float y})` → 40 bytes per marker. Dictionary is `DICT_APRILTAG_16h5` (ids 0..29); corners are clockwise from the marker's top-left. Emitted only in `aruco` / `aruco2x2` process modes.
   - Coordinates in both are in full-frame Y-plane pixel space; the renderer overlays them 1:1 on the canvas (checkerboard corners in green, aruco markers in amber). A block is emitted only when at least one pattern/marker was detected on that exact frame.
 - `ChunkData` packets carry the frame payload (YUV420 main stream).
 
@@ -63,25 +63,28 @@ npm run preview
 
 YAML files define:
 - Servers: one entry per server, each with a WebSocket URL (`address`) and its own optional `sensor` (model substring, e.g. "imx519", "imx708") and resolution (`width`/`height`). A client can talk to servers running different sensor types at different resolutions; within one server, every camera shares the same sensor and resolution. Omitted fields fall back to that server's own defaults.
-- Frame saving options (none/buffer/batch/checkerboard/checkerboard2x2/aruco/aruco2x2 modes), shared across all servers
+- Frame-processing options under the `processing:` key (formerly `frame_saving:`): the `mode` (none/buffer/batch/checkerboard/checkerboard2x2/aruco/aruco2x2) plus `save_frames` (default `true`), shared across all servers
 
-#### Frame Saving Modes
+#### Process Modes
 
-1. **none**: No frame saving
+The `mode` names what happens to each frame; `save_frames` (default `true`) is an orthogonal toggle for disk writing. When `save_frames: false`, detector modes still run and stream corners/markers but write nothing (writer pool never starts). For `buffer`/`batch` (no side-product) `false` just means no output.
+
+1. **none**: No processing
 2. **buffer**: Buffer frames in memory, write all at once when stopping
 3. **batch**: Write frames in batches during capture
-4. **checkerboard**: Detect and save only frames containing checkerboard patterns
-5. **checkerboard2x2**: Split each frame into 4 equal quadrants and save the whole frame if **any** quadrant contains a checkerboard pattern. Uses the same `checkerboard_*` parameters as `checkerboard`.
-6. **aruco**: Detect and save only frames containing `DICT_APRILTAG_16h5` markers. Uses the `aruco_*` parameters.
-7. **aruco2x2**: Split each frame into 4 equal quadrants and save the whole frame if **any** quadrant contains a marker. Uses the same `aruco_*` parameters as `aruco`.
+4. **checkerboard**: Detect checkerboard patterns and stream their corners; when `save_frames`, also save the frames containing them
+5. **checkerboard2x2**: Split each frame into 4 equal quadrants and detect in each; stream every detecting quadrant's corners; when `save_frames`, save the whole frame if **any** quadrant detects. Uses the same `checkerboard_*` parameters as `checkerboard`.
+6. **aruco**: Detect `DICT_APRILTAG_16h5` markers and stream their ids + corners; when `save_frames`, also save the frames containing them. Uses the `aruco_*` parameters.
+7. **aruco2x2**: Split each frame into 4 equal quadrants and detect in each; when `save_frames`, save the whole frame if **any** quadrant detects. Uses the same `aruco_*` parameters as `aruco`.
 
 #### Checkerboard Mode Configuration
 
 When using `mode: checkerboard` or `mode: checkerboard2x2`, additional parameters are available:
 
 ```yaml
-frame_saving:
+processing:
   mode: checkerboard
+  save_frames: true           # false ⇒ detect + stream corners only, write nothing
   output_dir: calibration
   batch_size: 10
   writer_threads: 4
@@ -104,8 +107,9 @@ When using `mode: aruco` or `mode: aruco2x2`, the server runs `cv::aruco::detect
 Additional parameters:
 
 ```yaml
-frame_saving:
+processing:
   mode: aruco
+  save_frames: true                # false ⇒ detect + stream markers only, write nothing
   output_dir: calibration
   batch_size: 10
   writer_threads: 4

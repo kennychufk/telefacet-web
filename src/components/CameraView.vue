@@ -141,7 +141,7 @@ const paddedId = computed(() => String(props.camera.globalId).padStart(2, '0'))
 // count in every frame header (stored as camera.framesSaved). Only surfaced in
 // the detector save modes (checkerboard / checkerboard2x2 / aruco / aruco2x2),
 // where it doubles as live calibration-capture progress.
-const saveMode = computed(() => store.config?.frame_saving?.mode)
+const saveMode = computed(() => store.config?.processing?.mode)
 const showSavedCount = computed(
   () => saveMode.value === 'checkerboard' || saveMode.value === 'checkerboard2x2'
     || saveMode.value === 'aruco' || saveMode.value === 'aruco2x2'
