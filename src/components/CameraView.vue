@@ -12,9 +12,10 @@
       :height="canvasHeight"
     />
 
-    <!-- Detected-checkerboard corner overlay. Same intrinsic pixel size as
-         the WebGL canvas so server-supplied full-frame corner coordinates
-         map 1:1. Hidden alongside the main canvas in header-only mode. -->
+    <!-- Detection overlay: checkerboard corners (green) and ArUco markers
+         (amber). Same intrinsic pixel size as the WebGL canvas so
+         server-supplied full-frame coordinates map 1:1. Hidden alongside the
+         main canvas in header-only mode. -->
     <canvas
       ref="overlayCanvas"
       class="canvas overlay"
@@ -50,7 +51,7 @@
       </div>
     </div>
 
-    <!-- Saved-frame counter (checkerboard / checkerboard2x2 modes only).
+    <!-- Saved-frame counter (checkerboard / aruco detector modes only).
          Always visible in image mode — calibration capture progress should be
          readable at a glance, not gated behind hover. -->
     <div
@@ -124,6 +125,11 @@ let frameHandler = null
 const CORNER_COLOR = '#00FF80'
 const CORNER_RADIUS_PX = 6
 
+// ArUco marker overlay (protocol v6). Amber, deliberately distinct from the
+// checkerboard green above, so both detector modes read differently on screen.
+const ARUCO_COLOR = '#FF8C00'
+const ARUCO_DOT_RADIUS_PX = 4
+
 const ownServer = computed(() => store.servers.find(s => s.index === props.camera.serverIndex))
 const canvasWidth = computed(() => ownServer.value?.width || 1456)
 const canvasHeight = computed(() => ownServer.value?.height || 1088)
@@ -133,11 +139,12 @@ const paddedId = computed(() => String(props.camera.globalId).padStart(2, '0'))
 
 // Saved-frame counter. The server reports a running per-camera frames_saved
 // count in every frame header (stored as camera.framesSaved). Only surfaced in
-// the checkerboard / checkerboard2x2 save modes, where it doubles as live
-// calibration-capture progress.
+// the detector save modes (checkerboard / checkerboard2x2 / aruco / aruco2x2),
+// where it doubles as live calibration-capture progress.
 const saveMode = computed(() => store.config?.frame_saving?.mode)
 const showSavedCount = computed(
   () => saveMode.value === 'checkerboard' || saveMode.value === 'checkerboard2x2'
+    || saveMode.value === 'aruco' || saveMode.value === 'aruco2x2'
 )
 const framesSaved = computed(() => props.camera.framesSaved || 0)
 
@@ -209,6 +216,7 @@ function setupFrameListener() {
       bytesPerLine: data.bytesPerLine,
       frameId: data.frameId,
       cornerSets: data.cornerSets || [],
+      arucoSets: data.arucoSets || [],
       timestamp: now
     })
 
@@ -257,13 +265,61 @@ function drawCornerOverlay(cornerSets) {
   }
 }
 
+// Draw detected ArUco markers on the same overlay canvas as the checkerboard
+// corners. Does NOT clear — drawCornerOverlay already wiped the canvas for this
+// frame (a frame only ever carries one detection kind, but drawing both is
+// harmless). Marker coordinates are in the same full-frame Y-plane space, so
+// they map 1:1 to canvas pixels. Each marker: quad outline + corner dots +
+// centered id label (dark shadow behind for legibility).
+function drawArucoOverlay(arucoSets) {
+  if (!overlayCtx || !overlayCanvas.value) return
+  if (!arucoSets || arucoSets.length === 0) return
+
+  for (const marker of arucoSets) {
+    const c = marker.corners
+    if (!c || c.length < 4) continue
+
+    // Outline (clockwise from the marker's top-left, as sent by the server).
+    overlayCtx.strokeStyle = ARUCO_COLOR
+    overlayCtx.lineWidth = 2
+    overlayCtx.beginPath()
+    overlayCtx.moveTo(c[0].x, c[0].y)
+    for (let i = 1; i < 4; i++) overlayCtx.lineTo(c[i].x, c[i].y)
+    overlayCtx.closePath()
+    overlayCtx.stroke()
+
+    // Corner dots.
+    overlayCtx.fillStyle = ARUCO_COLOR
+    for (const p of c) {
+      overlayCtx.beginPath()
+      overlayCtx.arc(p.x, p.y, ARUCO_DOT_RADIUS_PX, 0, Math.PI * 2)
+      overlayCtx.fill()
+    }
+
+    // Id label at the marker centroid.
+    const cx = (c[0].x + c[1].x + c[2].x + c[3].x) / 4
+    const cy = (c[0].y + c[1].y + c[2].y + c[3].y) / 4
+    const label = String(marker.markerId)
+    overlayCtx.font = '20px sans-serif'
+    overlayCtx.textAlign = 'center'
+    overlayCtx.textBaseline = 'middle'
+    overlayCtx.fillStyle = '#000'
+    overlayCtx.fillText(label, cx + 1, cy + 1)
+    overlayCtx.fillStyle = ARUCO_COLOR
+    overlayCtx.fillText(label, cx, cy)
+  }
+}
+
 function renderLoop() {
   if (frameQueue.length > 0 && debayer) {
     const frame = frameQueue.shift()
     lastFrameTime = frame.timestamp
     try {
       debayer.processFrame(frame.data, frame.width, frame.height, frame.bytesPerLine)
+      // drawCornerOverlay clears the overlay once; drawArucoOverlay draws on
+      // top without clearing.
       drawCornerOverlay(frame.cornerSets)
+      drawArucoOverlay(frame.arucoSets)
     } catch (error) {
       console.error(`Error processing frame for camera ${props.camera.globalId}:`, error)
     }
@@ -465,7 +521,7 @@ watch(streaming, (on) => {
 .saved-frames-big-count { color: var(--live); font-weight: 600; }
 .saved-frames-big-label { color: var(--text-sec); margin-left: 0.4em; font-size: 0.85em; }
 
-/* Always-visible saved-frame badge (image mode, checkerboard modes). Sits
+/* Always-visible saved-frame badge (image mode, detector modes). Sits
    top-left — the one corner the hover overlay leaves free (fps top-right,
    cam label bottom-left, focus bottom-right). The translucent pill keeps it
    legible over any frame content. */

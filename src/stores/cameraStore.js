@@ -300,6 +300,13 @@ export const useCameraStore = defineStore('camera', {
           params.checkerboard_num_threads = saveConfig.checkerboard_num_threads
         }
 
+        // Add aruco parameters if mode uses ArUco marker detection
+        if (saveConfig.mode === 'aruco' || saveConfig.mode === 'aruco2x2') {
+          params.aruco_full_res_detection = saveConfig.aruco_full_res_detection
+          params.aruco_num_threads = saveConfig.aruco_num_threads
+          params.aruco_corner_refine = saveConfig.aruco_corner_refine
+        }
+
         this.serverManager.setSaveModeAll(saveConfig.mode, params)
         return true
       } catch (error) {

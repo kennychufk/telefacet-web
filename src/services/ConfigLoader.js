@@ -84,7 +84,7 @@ export class ConfigLoader {
       }
     }
 
-    const validModes = ['none', 'buffer', 'batch', 'checkerboard', 'checkerboard2x2']
+    const validModes = ['none', 'buffer', 'batch', 'checkerboard', 'checkerboard2x2', 'aruco', 'aruco2x2']
     if (!validModes.includes(config.frame_saving.mode)) {
       throw new Error(`frame_saving.mode must be one of: ${validModes.join(', ')}`)
     }
@@ -152,6 +152,28 @@ export class ConfigLoader {
       }
     }
 
+    // Validate aruco-specific parameters if mode uses ArUco marker detection.
+    // aruco_num_threads applies only to aruco2x2 quadrant parallelism (clamped
+    // [1,4] by the server); it's harmless for `aruco`.
+    if (config.frame_saving.mode === 'aruco' ||
+        config.frame_saving.mode === 'aruco2x2') {
+      // Set defaults for aruco parameters
+      if (typeof config.frame_saving.aruco_full_res_detection !== 'boolean') {
+        config.frame_saving.aruco_full_res_detection = false
+      }
+      if (typeof config.frame_saving.aruco_num_threads !== 'number') {
+        config.frame_saving.aruco_num_threads = 4
+      }
+      if (typeof config.frame_saving.aruco_corner_refine !== 'boolean') {
+        config.frame_saving.aruco_corner_refine = false
+      }
+
+      // Validate thread count (server clamps to [1,4] for quadrant parallelism)
+      if (config.frame_saving.aruco_num_threads < 1 || config.frame_saving.aruco_num_threads > 4) {
+        throw new Error('frame_saving.aruco_num_threads must be between 1 and 4')
+      }
+    }
+
     return config
   }
 
@@ -193,7 +215,11 @@ export class ConfigLoader {
         checkerboard_rows: 8,
         checkerboard_cols: 11,
         checkerboard_full_res_detection: false,
-        checkerboard_num_threads: 4
+        checkerboard_num_threads: 4,
+        // Optional aruco parameters (used when mode is 'aruco' or 'aruco2x2')
+        aruco_full_res_detection: false,
+        aruco_num_threads: 4,
+        aruco_corner_refine: false
       }
     }
   }

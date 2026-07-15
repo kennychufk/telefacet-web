@@ -186,9 +186,11 @@ export class WebSocketManager extends EventEmitter {
   }
 
   handleChunkStart(data) {
-    // Protocol v5: ChunkStartMarker (8) + ChunkHeader (68) = 76 bytes minimum,
-    // plus an optional variable-size CornerBlock appended in the same message
-    // when the server's save mode is `checkerboard` or `checkerboard2x2`.
+    // Protocol v6: ChunkStartMarker (8) + ChunkHeader (68) = 76 bytes minimum,
+    // plus an optional variable-size detection block appended in the same
+    // message when the server's save mode is a detector mode (`checkerboard` /
+    // `checkerboard2x2` / `aruco` / `aruco2x2`). The `detection_kind` header
+    // byte selects the block's per-record layout.
     const MIN_SIZE = 76
     if (data.byteLength < MIN_SIZE) {
       this.logger.error(`Invalid chunk start size: ${data.byteLength} bytes, expected at least ${MIN_SIZE}`)
@@ -198,8 +200,8 @@ export class WebSocketManager extends EventEmitter {
     const view = new DataView(data)
     const version = view.getUint32(4, true)
 
-    if (version !== 5) {
-      this.logger.error(`Unsupported chunk version: ${version} (expected 5)`)
+    if (version !== 6) {
+      this.logger.error(`Unsupported chunk version: ${version} (expected 6)`)
       return
     }
 
@@ -228,6 +230,10 @@ export class WebSocketManager extends EventEmitter {
     // (0=Idle, 1=Scanning, 2=Focused, 3=Failed); 0xFF means not reported.
     const lensPosition = view.getFloat32(68, true)
     const afState      = view.getUint8(72)
+    // v6 addition: detection_kind (offset 73, took over the first of the old
+    // reserved2[3] bytes). 0=none, 1=checkerboard, 2=aruco. It selects how to
+    // parse the detection block that `cornerBlockSize` measures.
+    const detectionKind = view.getUint8(73)
 
     if (data.byteLength !== MIN_SIZE + cornerBlockSize) {
       this.logger.error(
@@ -236,7 +242,18 @@ export class WebSocketManager extends EventEmitter {
       return
     }
 
-    const cornerSets = this.parseCornerBlock(view, MIN_SIZE, cornerBlockSize, numCornerSets)
+    // The detection block (if any) is a single block measured by
+    // cornerBlockSize; detection_kind picks its per-record format. Only one of
+    // the two lists is ever populated for a given frame.
+    let cornerSets = []
+    let arucoSets = []
+    if (cornerBlockSize > 0) {
+      if (detectionKind === 2) {
+        arucoSets = this.parseArucoBlock(view, MIN_SIZE, cornerBlockSize, numCornerSets)
+      } else {
+        cornerSets = this.parseCornerBlock(view, MIN_SIZE, cornerBlockSize, numCornerSets)
+      }
+    }
 
     // Check if this is header only mode (totalChunks = 0, totalSize = 0)
     if (totalChunks === 0 && totalSize === 0) {
@@ -245,14 +262,14 @@ export class WebSocketManager extends EventEmitter {
       this.updateServerFpsStats(cameraId, timestampUs, frameDurationUs, frameId)
       this.emitFrame(cameraId, frameId, width, height, bytesPerLine,
                      new Uint8Array(0), pixelFormat, framesSaved, cornerSets,
-                     lensPosition, afState)
+                     arucoSets, lensPosition, afState)
       return
     }
 
     this.logger.debug(`Starting chunked frame ${frameId} from camera ${cameraId}: ${totalChunks} chunks, ${totalSize} bytes`)
 
     this.chunkBuffers.set(frameUuid, {
-      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs, cornerSets, lensPosition, afState },
+      header: { frameId, cameraId, totalChunks, totalSize, bytesPerLine, width, height, pixelFormat, framesSaved, timestampUs, frameDurationUs, cornerSets, arucoSets, lensPosition, afState },
       chunks: new Array(totalChunks),
       receivedChunks: 0,
       startTime: performance.now()
@@ -295,6 +312,48 @@ export class WebSocketManager extends EventEmitter {
       this.logger.warn(`Parsed ${sets.length} corner sets, expected ${expectedSets}`)
     }
     return sets
+  }
+
+  // Parse the v6 detection block when detection_kind === 2 (aruco). Sibling of
+  // parseCornerBlock: same block bytes and bounds-checking, but each record is
+  // an 8-byte MarkerSetHeader (signed int32 markerId, uint8 quadrant, uint8
+  // flags, uint16 numCorners) followed by numCorners × { float x, float y }.
+  // Returns an array of { markerId, quadrant, flags, corners: [{x, y}, ...] }.
+  // Coordinates are in full-frame Y-plane pixel space, identical to the
+  // checkerboard path, so the renderer overlays them 1:1.
+  parseArucoBlock(view, offset, blockSize, expectedSets) {
+    const markers = []
+    if (blockSize === 0 || expectedSets === 0) return markers
+
+    const end = offset + blockSize
+    while (offset + 8 <= end && markers.length < expectedSets) {
+      const markerId   = view.getInt32(offset, true)   // signed
+      const quadrant   = view.getUint8(offset + 4)
+      const flags      = view.getUint8(offset + 5)
+      const numCorners = view.getUint16(offset + 6, true)
+      offset += 8
+
+      const cornerBytes = numCorners * 8
+      if (offset + cornerBytes > end) {
+        this.logger.error(`MarkerBlock overrun: marker ${markers.length} claims ${numCorners} corners but only ${end - offset} bytes left`)
+        return markers
+      }
+
+      const corners = new Array(numCorners)
+      for (let i = 0; i < numCorners; i++) {
+        const x = view.getFloat32(offset, true)
+        const y = view.getFloat32(offset + 4, true)
+        corners[i] = { x, y }
+        offset += 8
+      }
+
+      markers.push({ markerId, quadrant, flags, corners })
+    }
+
+    if (markers.length !== expectedSets) {
+      this.logger.warn(`Parsed ${markers.length} markers, expected ${expectedSets}`)
+    }
+    return markers
   }
 
   handleChunkData(data) {
@@ -379,6 +438,7 @@ export class WebSocketManager extends EventEmitter {
         buffer.header.pixelFormat,
         buffer.header.framesSaved,
         buffer.header.cornerSets,
+        buffer.header.arucoSets,
         buffer.header.lensPosition,
         buffer.header.afState
       )
@@ -533,7 +593,7 @@ export class WebSocketManager extends EventEmitter {
   }
 
   emitFrame(cameraId, frameId, width, height, bytesPerLine, data,
-            pixelFormat = 0, framesSaved = 0, cornerSets = [],
+            pixelFormat = 0, framesSaved = 0, cornerSets = [], arucoSets = [],
             lensPosition = NaN, afState = 0xFF) {
     this.emit('frame', {
       serverIndex: this.serverIndex,
@@ -546,6 +606,7 @@ export class WebSocketManager extends EventEmitter {
       pixelFormat,
       framesSaved,
       cornerSets,
+      arucoSets,
       lensPosition,
       afState,
       isHeaderOnly: data.length === 0
