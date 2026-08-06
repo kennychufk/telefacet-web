@@ -128,6 +128,25 @@
           </div>
         </section>
 
+        <!-- Trigger (save-on-demand; only exists in the `trigger` mode) -->
+        <section v-if="store.isTriggerMode" class="section">
+          <div class="section-label">Trigger</div>
+          <button
+            class="trigger-btn"
+            :class="{ pending: store.triggerPending }"
+            :disabled="!store.canTriggerCapture"
+            :title="triggerHint"
+            @click="fireTrigger"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5" />
+              <circle cx="6" cy="6" r="2" fill="currentColor" />
+            </svg>
+            <span>{{ store.triggerPending ? 'Capturing…' : 'Capture' }}</span>
+          </button>
+          <div class="trigger-note">{{ triggerHint }}</div>
+        </section>
+
         <!-- Exposure & frame rate -->
         <section v-if="store.hasConnectedServers" class="section">
           <div class="section-label">Exposure</div>
@@ -152,6 +171,7 @@
         <div class="kbd"><span class="key">H</span><span class="sep">·</span><span class="meaning">header only</span></div>
         <div class="kbd"><span class="key">R</span><span class="sep">·</span><span class="meaning">reset counts</span></div>
         <div class="kbd"><span class="key">D</span><span class="sep">·</span><span class="meaning">debug</span></div>
+        <div v-if="store.isTriggerMode" class="kbd"><span class="key">T</span><span class="sep">·</span><span class="meaning">trigger</span></div>
       </footer>
     </div>
   </aside>
@@ -231,6 +251,25 @@ async function retreat() {
   } finally {
     busy.value = false
   }
+}
+
+// In `trigger` mode nothing is written until this fires. The button stays
+// disabled while a capture is outstanding — the server allows only one.
+const triggerHint = computed(() => {
+  if (!store.camerasRunning) return 'Start the cameras to capture'
+  if (store.triggerPending) return 'Waiting for the triggered frame…'
+  const last = store.lastTriggerResult
+  if (last) {
+    return last.cancelled
+      ? `Trigger #${last.triggerId} cancelled`
+      : `Trigger #${last.triggerId}: saved ${last.captures.length} frame(s)`
+  }
+  return 'Saves one frame per running camera'
+})
+
+async function fireTrigger() {
+  if (!store.canTriggerCapture) return
+  await store.triggerCapture()
 }
 
 async function toggleHeaderOnly() {
@@ -492,6 +531,45 @@ async function toggleHeaderOnly() {
 
 .thumb.on {
   left: 14px;
+}
+
+/* Trigger (save-on-demand shutter) */
+.trigger-btn {
+  width: calc(100% - 32px);
+  margin: 0 16px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklch, var(--live) 38%, transparent);
+  border-radius: 5px;
+  background: var(--live-dim);
+  color: var(--live);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+
+.trigger-btn:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--live) 22%, transparent);
+}
+
+.trigger-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.trigger-btn.pending {
+  border-color: color-mix(in oklch, var(--accent) 38%, transparent);
+  color: var(--accent);
+}
+
+.trigger-note {
+  padding: 5px 16px 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-mid);
 }
 
 /* Error */

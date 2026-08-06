@@ -85,7 +85,7 @@ export class ConfigLoader {
       }
     }
 
-    const validModes = ['none', 'buffer', 'batch', 'checkerboard', 'checkerboard2x2', 'aruco', 'aruco2x2']
+    const validModes = ['none', 'buffer', 'batch', 'trigger', 'checkerboard', 'checkerboard2x2', 'aruco', 'aruco2x2']
     if (!validModes.includes(config.processing.mode)) {
       throw new Error(`processing.mode must be one of: ${validModes.join(', ')}`)
     }
@@ -157,6 +157,19 @@ export class ConfigLoader {
       // Validate thread count
       if (config.processing.checkerboard_num_threads < 1 || config.processing.checkerboard_num_threads > 32) {
         throw new Error('processing.checkerboard_num_threads must be between 1 and 32')
+      }
+    }
+
+    // Validate trigger-specific parameters. `trigger` writes nothing until the
+    // client sends trigger_capture; trigger_skip_frames is the default number
+    // of settling frames discarded per camera before the one that is kept.
+    if (config.processing.mode === 'trigger') {
+      if (typeof config.processing.trigger_skip_frames !== 'number') {
+        config.processing.trigger_skip_frames = 0
+      }
+      if (config.processing.trigger_skip_frames < 0 ||
+          !Number.isInteger(config.processing.trigger_skip_frames)) {
+        throw new Error('processing.trigger_skip_frames must be a non-negative integer')
       }
     }
 

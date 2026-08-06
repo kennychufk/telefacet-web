@@ -39,6 +39,12 @@ export const useCameraStore = defineStore('camera', {
     // module. The Focus UI falls back to a default range when this is null.
     lensPositionLimits: null,
 
+    // Trigger mode (save-on-demand). triggerPendingServers counts servers that
+    // have been armed but not yet acked; lastTriggerResult holds the most
+    // recent ack: { triggerId, cancelled, captures, at }.
+    triggerPendingServers: 0,
+    lastTriggerResult: null,
+
     // Error handling
     lastError: null
   }),
@@ -78,6 +84,21 @@ export const useCameraStore = defineStore('camera', {
     allStreaming: (state) => {
       return state.cameras.length > 0 &&
         state.cameras.every(cam => cam.streaming)
+    },
+
+    // The `trigger` process mode writes nothing until trigger_capture asks for
+    // a frame, so the shutter button only exists in that mode.
+    isTriggerMode: (state) => {
+      return state.config?.processing?.mode === 'trigger'
+    },
+
+    triggerPending: (state) => state.triggerPendingServers > 0,
+
+    canTriggerCapture: (state) => {
+      return state.config?.processing?.mode === 'trigger' &&
+        state.camerasRunning &&
+        state.triggerPendingServers === 0 &&
+        state.servers.some(server => server.connected)
     }
   },
 
@@ -234,6 +255,20 @@ export const useCameraStore = defineStore('camera', {
           default: data.default
         }
       })
+
+      manager.on('trigger-result', (data) => {
+        // One ack per server; the pending count clears as they report.
+        this.triggerPendingServers = Math.max(0, this.triggerPendingServers - 1)
+        this.lastTriggerResult = {
+          triggerId: data.triggerId,
+          cancelled: data.cancelled,
+          captures: data.captures,
+          at: Date.now()
+        }
+        if (data.cancelled) {
+          this.lastError = `Trigger ${data.triggerId} was cancelled before every camera delivered`
+        }
+      })
     },
 
     updateCameraList() {
@@ -299,6 +334,11 @@ export const useCameraStore = defineStore('camera', {
           params.checkerboard_cols = saveConfig.checkerboard_cols
           params.checkerboard_full_res_detection = saveConfig.checkerboard_full_res_detection
           params.checkerboard_num_threads = saveConfig.checkerboard_num_threads
+        }
+
+        // Trigger mode: default settling frames discarded per capture
+        if (saveConfig.mode === 'trigger') {
+          params.trigger_skip_frames = saveConfig.trigger_skip_frames
         }
 
         // Add aruco parameters if mode uses ArUco marker detection
@@ -415,6 +455,42 @@ export const useCameraStore = defineStore('camera', {
         console.error(error)
         return false
       }
+    },
+
+    /**
+     * Save one frame per running camera, right now (`trigger` mode only).
+     * Resolves once every armed server has acked — meaning the frames really
+     * were captured — or when `timeoutMs` elapses.
+     * @param {{skipFrames?: number, timeoutMs?: number}} [options]
+     * @returns {Promise<boolean>} true if every armed server acked in time.
+     */
+    async triggerCapture({ skipFrames, timeoutMs = 10000 } = {}) {
+      if (!this.canTriggerCapture) {
+        this.lastError = this.isTriggerMode
+          ? 'Cameras must be running (and no trigger pending) to capture'
+          : 'trigger_capture requires the "trigger" process mode'
+        return false
+      }
+
+      const armed = this.serverManager.triggerCaptureAll({ skipFrames })
+      if (armed === 0) {
+        this.lastError = 'No connected servers to trigger'
+        return false
+      }
+      this.triggerPendingServers = armed
+
+      // Wait for the `trigger-result` handler to drain the pending count. The
+      // server sends no ack at all if it rejects the request, hence the cap.
+      const deadline = Date.now() + timeoutMs
+      while (this.triggerPendingServers > 0 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 25))
+      }
+      if (this.triggerPendingServers > 0) {
+        this.triggerPendingServers = 0
+        this.lastError = 'Trigger capture timed out waiting for the frame'
+        return false
+      }
+      return !this.lastTriggerResult?.cancelled
     },
 
     async setHeaderOnlyMode(enabled) {

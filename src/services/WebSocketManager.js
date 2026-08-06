@@ -523,6 +523,22 @@ export class WebSocketManager extends EventEmitter {
           })
           break
 
+        case 'trigger_result':
+          // Asynchronous ack for trigger_capture (§4.17): arrives only once
+          // every armed camera has delivered its frame, so it's the signal a
+          // calibration rig waits on before moving again.
+          this.logger.info(
+            `Trigger ${message.trigger_id} ${message.cancelled ? 'cancelled' : 'complete'}: ` +
+            `${(message.captures || []).length} capture(s)`
+          )
+          this.emit('trigger-result', {
+            serverIndex: this.serverIndex,
+            triggerId: message.trigger_id,
+            cancelled: !!message.cancelled,
+            captures: message.captures || []
+          })
+          break
+
         default:
           this.logger.warn('Unknown message type:', message.type)
       }
@@ -721,6 +737,23 @@ export class WebSocketManager extends EventEmitter {
     })
   }
 
+  /**
+   * Save one frame per running camera — the shutter button of the `trigger`
+   * process mode (§4.17). Rejected by the server in any other mode.
+   * @param {{cameraId?: number, skipFrames?: number}} [options] cameraId omitted
+   *   ⇒ every running camera on this server is armed; skipFrames omitted ⇒ the
+   *   server's configured trigger_skip_frames.
+   * @returns {boolean} whether the request was sent. The capture itself is
+   *   confirmed later by the async `trigger-result` event.
+   */
+  triggerCapture({ cameraId, skipFrames } = {}) {
+    this.logger.info('Trigger capture')
+    const command = { cmd: 'trigger_capture' }
+    if (typeof cameraId === 'number') command.camera_id = cameraId
+    if (typeof skipFrames === 'number') command.skip_frames = skipFrames
+    return this.send(command)
+  }
+
   startCameras() {
     this.logger.info('Starting cameras')
     return this.send({ cmd: 'start_cameras' })
@@ -854,6 +887,7 @@ export class MultiServerManager extends EventEmitter {
     manager.on('reconnect-failed', (...args) => this.emit('reconnect-failed', ...args))
     manager.on('frame-duration-limits', (...args) => this.emit('frame-duration-limits', ...args))
     manager.on('lens-position-limits', (...args) => this.emit('lens-position-limits', ...args))
+    manager.on('trigger-result', (...args) => this.emit('trigger-result', ...args))
 
     this.servers.set(index, manager)
     return manager
@@ -927,6 +961,21 @@ export class MultiServerManager extends EventEmitter {
         server.setSaveMode(mode, params)
       }
     }
+  }
+
+  /**
+   * Fire a `trigger` mode capture on every connected server. Each server arms
+   * all of its running cameras and acks asynchronously via `trigger-result`.
+   * @param {{skipFrames?: number}} [options]
+   * @returns {number} how many servers the request was sent to.
+   */
+  triggerCaptureAll({ skipFrames } = {}) {
+    this.logger.info('Trigger capture on all servers')
+    let sent = 0
+    for (const server of this.servers.values()) {
+      if (server.connected && server.triggerCapture({ skipFrames })) sent++
+    }
+    return sent
   }
 
   setHeaderOnlyModeAll(enabled) {

@@ -49,6 +49,7 @@ npm run preview
 - `start_cameras`/`stop_cameras`: Control camera lifecycle
 - `start_stream`/`stop_stream`: Control per-camera streaming
 - `set_process_mode`: Configure per-frame processing (detection and/or saving). `params.save_frames` (default `true`) toggles disk writing independently of the mode — `false` runs the detector and streams its corners/markers but writes nothing. (Formerly `set_save_mode`.)
+- `trigger_capture`: Save one frame per running camera, on demand (`trigger` mode only — rejected with an `error` in every other mode). Optional `camera_id` narrows it to one camera; optional `skip_frames` overrides the configured `trigger_skip_frames`. Answered **asynchronously** with a `trigger_result` message (`trigger_id`, `cancelled`, `captures[] = {camera_id, frame_id, filename}`) once every armed camera has actually delivered its frame — not with a plain `status`. `WebSocketManager.triggerCapture()` sends it; the ack surfaces as the `trigger-result` event, re-forwarded by `MultiServerManager` and consumed by `cameraStore.triggerCapture()`.
 
 **Binary Messages (protocol v6)**:
 - `ChunkStartMarker` (8 bytes): `magic = 'CHUN'`, `version = 6`.
@@ -63,7 +64,7 @@ npm run preview
 
 YAML files define:
 - Servers: one entry per server, each with a WebSocket URL (`address`) and its own optional `sensor` (model substring, e.g. "imx519", "imx708") and resolution (`width`/`height`). A client can talk to servers running different sensor types at different resolutions; within one server, every camera shares the same sensor and resolution. Omitted fields fall back to that server's own defaults.
-- Frame-processing options under the `processing:` key (formerly `frame_saving:`): the `mode` (none/buffer/batch/checkerboard/checkerboard2x2/aruco/aruco2x2) plus `save_frames` (default `true`), shared across all servers
+- Frame-processing options under the `processing:` key (formerly `frame_saving:`): the `mode` (none/buffer/batch/trigger/checkerboard/checkerboard2x2/aruco/aruco2x2) plus `save_frames` (default `true`), shared across all servers
 
 #### Process Modes
 
@@ -72,10 +73,26 @@ The `mode` names what happens to each frame; `save_frames` (default `true`) is a
 1. **none**: No processing
 2. **buffer**: Buffer frames in memory, write all at once when stopping
 3. **batch**: Write frames in batches during capture
-4. **checkerboard**: Detect checkerboard patterns and stream their corners; when `save_frames`, also save the frames containing them
-5. **checkerboard2x2**: Split each frame into 4 equal quadrants and detect in each; stream every detecting quadrant's corners; when `save_frames`, save the whole frame if **any** quadrant detects. Uses the same `checkerboard_*` parameters as `checkerboard`.
-6. **aruco**: Detect `DICT_APRILTAG_16h5` markers and stream their ids + corners; when `save_frames`, also save the frames containing them. Uses the `aruco_*` parameters.
-7. **aruco2x2**: Split each frame into 4 equal quadrants and detect in each; when `save_frames`, save the whole frame if **any** quadrant detects. Uses the same `aruco_*` parameters as `aruco`.
+4. **trigger**: Save-on-demand. Frames stream live but nothing is written until the client sends `trigger_capture`, which saves one frame per armed camera. Built for automated calibration: move the camera (robot arm), wait for it to stop, then trigger — so no saved frame carries motion blur. `trigger_skip_frames` (default `0`) discards that many settling frames per camera first. The control panel shows a **Capture** button (shortcut **T**) in this mode only, wired to `cameraStore.triggerCapture()`, which resolves when every server acks.
+5. **checkerboard**: Detect checkerboard patterns and stream their corners; when `save_frames`, also save the frames containing them
+6. **checkerboard2x2**: Split each frame into 4 equal quadrants and detect in each; stream every detecting quadrant's corners; when `save_frames`, save the whole frame if **any** quadrant detects. Uses the same `checkerboard_*` parameters as `checkerboard`.
+7. **aruco**: Detect `DICT_APRILTAG_16h5` markers and stream their ids + corners; when `save_frames`, also save the frames containing them. Uses the `aruco_*` parameters.
+8. **aruco2x2**: Split each frame into 4 equal quadrants and detect in each; when `save_frames`, save the whole frame if **any** quadrant detects. Uses the same `aruco_*` parameters as `aruco`.
+
+#### Trigger Mode Configuration
+
+```yaml
+processing:
+  mode: trigger
+  save_frames: true           # trigger mode is pointless with this off
+  output_dir: calibration
+  writer_threads: 4
+  trigger_skip_frames: 0      # settling frames discarded per camera per trigger
+```
+
+Only one trigger may be outstanding at a time — the server rejects an overlapping
+`trigger_capture` with an `error`, and the store's `canTriggerCapture` getter
+keeps the button disabled while `triggerPendingServers > 0`.
 
 #### Checkerboard Mode Configuration
 

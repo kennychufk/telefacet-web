@@ -66,13 +66,16 @@ async function handleKeyPress(event) {
     if (store.hasConnectedServers) await store.resetFrameCounts()
   } else if (k === 'd') {
     showDebugPanel.value = !showDebugPanel.value
+  } else if (k === 't') {
+    // Shutter for the `trigger` process mode; a no-op in every other mode.
+    if (store.canTriggerCapture) await store.triggerCapture()
   }
 }
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyPress)
   console.log('telefacet — ready')
-  console.log('Shortcuts:  P · panel   H · header only   R · reset counts   D · debug')
+  console.log('Shortcuts:  P · panel   H · header only   R · reset counts   D · debug   T · trigger capture')
 })
 
 onUnmounted(() => {
