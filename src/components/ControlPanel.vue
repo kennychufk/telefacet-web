@@ -159,6 +159,37 @@
           <FocusSection :disabled="!store.camerasConfigured" />
         </section>
 
+        <!-- Capture watchdog: a camera has stopped delivering frames and
+             will not recover on its own (protocol §7.1). Distinct from a
+             plain error because there is exactly one thing to do about it. -->
+        <div v-if="store.captureTimeout" class="stall">
+          <div class="stall-head">
+            Camera {{ store.captureTimeout.globalId ?? store.captureTimeout.cameraId }}
+            stopped delivering frames
+          </div>
+          <div class="stall-body">
+            Silent for {{ stalledSeconds }}s. libcamera's frontend has timed out;
+            capture will not resume by itself.
+            <template v-if="store.captureTimeout.framesDroppedBacklog">
+              {{ store.captureTimeout.framesDroppedBacklog }} frame(s) were dropped
+              at the server's backlog budget, so its memory budget is the likely cause.
+            </template>
+          </div>
+          <button class="stall-action" :disabled="recovering" @click="onRecover">
+            {{ recovering ? 'Restarting…' : 'Restart capture' }}
+          </button>
+        </div>
+
+        <!-- Frames the server refused at its backlog budget: the recording
+             from the last run has a gap. -->
+        <div v-if="store.lastFramesDroppedBacklog > 0" class="dropped">
+          <span>
+            {{ store.lastFramesDroppedBacklog }} frame(s) dropped at the server's
+            backlog budget — the last capture has a gap.
+          </span>
+          <button class="dropped-close" @click="store.clearDroppedNotice">×</button>
+        </div>
+
         <!-- Error -->
         <div v-if="store.lastError" class="error">
           <span>{{ store.lastError }}</span>
@@ -270,6 +301,24 @@ const triggerHint = computed(() => {
 async function fireTrigger() {
   if (!store.canTriggerCapture) return
   await store.triggerCapture()
+}
+
+// Capture watchdog banner: how long the camera has been silent, and the
+// stop_cameras + start_cameras cycle that is the only way back.
+const stalledSeconds = computed(() => {
+  const us = store.captureTimeout?.stalledForUs
+  return Number.isFinite(us) ? (us / 1e6).toFixed(1) : '?'
+})
+
+const recovering = ref(false)
+
+async function onRecover() {
+  recovering.value = true
+  try {
+    await store.recoverCapture()
+  } finally {
+    recovering.value = false
+  }
 }
 
 async function toggleHeaderOnly() {
@@ -570,6 +619,70 @@ async function toggleHeaderOnly() {
   font-size: 10px;
   line-height: 1.4;
   color: var(--text-mid);
+}
+
+/* Capture stall (capture_timeout) */
+.stall {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  background: color-mix(in oklch, var(--danger) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--danger) 45%, transparent);
+  border-radius: 5px;
+  color: var(--danger);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.stall-head {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.stall-body {
+  color: var(--text-mid);
+  margin-bottom: 6px;
+}
+
+.stall-action {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in oklch, var(--danger) 55%, transparent);
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--danger) 20%, transparent);
+  color: var(--danger);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.stall-action:disabled {
+  opacity: 0.6;
+}
+
+/* Frames refused at the server's backlog budget */
+.dropped {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  background: color-mix(in oklch, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--warn) 38%, transparent);
+  border-radius: 5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--warn);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.dropped span {
+  flex: 1;
+}
+
+.dropped-close {
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
 }
 
 /* Error */

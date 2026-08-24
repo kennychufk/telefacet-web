@@ -497,9 +497,22 @@ export class WebSocketManager extends EventEmitter {
 
         case 'error':
           this.logger.error('Server error:', message.message)
+          // Most errors are a reply to something we sent and carry only
+          // `message`. Coded errors (protocol §7.1) carry structured fields —
+          // notably `capture_timeout`, which is *unsolicited* and means a
+          // camera has stopped delivering frames for good. Forward the whole
+          // payload so the store can tell those apart and offer the recovery,
+          // rather than flattening everything to a string.
           this.emit('server-error', {
             serverIndex: this.serverIndex,
-            message: message.message
+            message: message.message,
+            code: message.code || null,
+            cameraId: Number.isInteger(message.camera_id) ? message.camera_id : null,
+            stalledForUs: Number.isFinite(message.stalled_for_us) ? message.stalled_for_us : null,
+            backlogBytes: Number.isFinite(message.backlog_bytes) ? message.backlog_bytes : null,
+            backlogBudgetBytes: Number.isFinite(message.backlog_budget_bytes) ? message.backlog_budget_bytes : null,
+            framesDroppedBacklog: Number.isFinite(message.frames_dropped_backlog) ? message.frames_dropped_backlog : null,
+            data: message
           })
           break
 
@@ -1032,6 +1045,18 @@ export class MultiServerManager extends EventEmitter {
       }
     }
     return false
+  }
+
+  // Re-query every connected server's lifecycle state. The server reports
+  // transitions via `status`, not a proactive `state`, so a caller that needs
+  // to know whether a transition actually happened has to ask — start_cameras
+  // can be refused (§4.6) and leave the server sitting at CONFIGURED.
+  getStateAll() {
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        server.getState()
+      }
+    }
   }
 
   startAllCameras() {

@@ -15,6 +15,8 @@ booting a browser or the Vue app.
 | `setup.js` | Installs `globalThis.WebSocket`, helpers (`waitForEvent`, `collectFrames`, `disableReconnect`) |
 | `websocket-manager.test.js` | Tests against a live server + real cameras |
 | `protocol-rejection.test.js` | Unit-level: spins an in-process `ws` server, validates v1/v2 CHUN handling |
+| `resource-guards.test.js` | Backlog budget, the `start_cameras` feasibility refusal, and the shape of coded `error` payloads |
+| `store-lifecycle.test.js` | Drives the Pinia store rather than `WebSocketManager`: guards that a refused `start_cameras` is reported as failure instead of assumed success |
 
 ## Install
 
@@ -31,7 +33,9 @@ The unit-level tests run anywhere:
 npm run test:e2e -- protocol-rejection.test.js
 ```
 
-The live-server tests need a Pi with IMX519s and a running `camera_ws_server`:
+The live-server tests need a Pi with a running `camera_ws_server`. Everything
+except `resource-guards` and `store-lifecycle` assumes an IMX519 rig at
+1456x1088; those two take the sensor and geometry from the environment:
 
 ```bash
 # on the Pi
@@ -46,6 +50,16 @@ Variables:
 | Variable | Default | Notes |
 |---|---|---|
 | `TELEFACET_WS_URL` | `ws://localhost:9001` | WebSocket URL of the server |
+| `TELEFACET_SENSOR` | `imx519` | Sensor model to discover. Only `resource-guards` and `store-lifecycle` read it; the older files assume an imx519 rig. |
+| `TELEFACET_WIDTH` / `TELEFACET_HEIGHT` | `1456` / `1088` | Resolution those two files configure. |
+
+Against an imx708 Pi, for example:
+
+```bash
+TELEFACET_WS_URL=ws://192.168.5.249:9001 TELEFACET_SENSOR=imx708 \
+  TELEFACET_WIDTH=4608 TELEFACET_HEIGHT=2592 \
+  npx vitest run test/e2e/resource-guards.test.js test/e2e/store-lifecycle.test.js
+```
 
 ## Why Node.js and not a headless browser?
 

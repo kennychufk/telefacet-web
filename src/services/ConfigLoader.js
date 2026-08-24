@@ -81,7 +81,10 @@ export class ConfigLoader {
         output_dir: 'camera_frames',
         prepend_timestamp_to_dir: false,
         batch_size: 10,
-        writer_threads: 4
+        writer_threads: 4,
+        backlog_max_bytes: 0,
+        disk_write_bytes_per_sec: 0,
+        allow_overcommit: false
       }
     }
 
@@ -127,6 +130,28 @@ export class ConfigLoader {
     }
     if (typeof config.processing.writer_threads !== 'number') {
       config.processing.writer_threads = 4
+    }
+
+    // Resource guards (protocol §4.5.1). Mode-independent, all optional. The
+    // server bounds the RAM held by captured-but-unwritten frames and refuses
+    // a mode that provably cannot keep up with the camera; 0 lets it decide
+    // both numbers for itself, which is the right default on unknown hardware.
+    if (typeof config.processing.backlog_max_bytes !== 'number') {
+      config.processing.backlog_max_bytes = 0
+    }
+    if (config.processing.backlog_max_bytes < 0 ||
+        !Number.isInteger(config.processing.backlog_max_bytes)) {
+      throw new Error('processing.backlog_max_bytes must be a non-negative integer (0 = let the server derive it)')
+    }
+    if (typeof config.processing.disk_write_bytes_per_sec !== 'number') {
+      config.processing.disk_write_bytes_per_sec = 0
+    }
+    if (config.processing.disk_write_bytes_per_sec < 0 ||
+        !Number.isInteger(config.processing.disk_write_bytes_per_sec)) {
+      throw new Error('processing.disk_write_bytes_per_sec must be a non-negative integer (0 = let the server measure it)')
+    }
+    if (typeof config.processing.allow_overcommit !== 'boolean') {
+      config.processing.allow_overcommit = false
     }
 
     // Validate checkerboard-specific parameters if mode uses checkerboard detection
@@ -232,6 +257,12 @@ export class ConfigLoader {
         prepend_timestamp_to_dir: false,
         batch_size: 10,
         writer_threads: 4,
+        // Resource guards: 0 lets the server derive the backlog budget from
+        // MemAvailable and measure its own disk rate. allow_overcommit starts
+        // capture even when the server judges the mode unable to keep up.
+        backlog_max_bytes: 0,
+        disk_write_bytes_per_sec: 0,
+        allow_overcommit: false,
         // Optional checkerboard parameters (used when mode is 'checkerboard' or 'checkerboard2x2')
         checkerboard_rows: 8,
         checkerboard_cols: 11,

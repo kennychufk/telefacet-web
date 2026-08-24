@@ -45,6 +45,18 @@ export const useCameraStore = defineStore('camera', {
     triggerPendingServers: 0,
     lastTriggerResult: null,
 
+    // Capture watchdog (protocol §7.1). Set when a server pushes an
+    // unsolicited `capture_timeout`, meaning one of its cameras has stopped
+    // delivering frames and will not resume on its own. Holds
+    // { serverIndex, cameraId, globalId, stalledForUs, message, at,
+    //   backlogBytes, backlogBudgetBytes, framesDroppedBacklog }.
+    // Cleared by recoverCapture(), by stopping the cameras, or as soon as the
+    // affected camera delivers a frame again.
+    captureTimeout: null,
+    // frames_dropped_backlog from the last stop_cameras reply. Non-zero means
+    // capture outran its sink and the recording has a gap.
+    lastFramesDroppedBacklog: 0,
+
     // Error handling
     lastError: null
   }),
@@ -53,6 +65,9 @@ export const useCameraStore = defineStore('camera', {
     streamingCameras: (state) => {
       return state.cameras.filter(cam => cam.streaming)
     },
+
+    // A camera has died and needs stop_cameras + start_cameras to come back.
+    hasCaptureTimeout: (state) => state.captureTimeout !== null,
 
     connectedServers: (state) => {
       return state.servers.filter(server => server.connected)
@@ -215,15 +230,54 @@ export const useCameraStore = defineStore('camera', {
         if (camera && typeof data.framesSaved === 'number') {
           camera.framesSaved = data.framesSaved
         }
+        // Frames are flowing again for the camera we flagged, so the stall is
+        // over (the server latches per episode and does the same).
+        if (this.captureTimeout &&
+            this.captureTimeout.globalId === data.globalCameraId) {
+          this.captureTimeout = null
+        }
       })
 
       manager.on('status', (data) => {
         console.log(`Server ${data.serverIndex} status:`, data.message)
+        // stop_cameras reports how many frames the server refused at its
+        // backlog budget (§4.9). Non-zero ⇒ the recording has a gap, which the
+        // operator needs to know before trusting the capture.
+        if (Number.isFinite(data.data?.frames_dropped_backlog)) {
+          this.lastFramesDroppedBacklog = data.data.frames_dropped_backlog
+        }
       })
 
       manager.on('server-error', (data) => {
         console.error(`Server ${data.serverIndex} error:`, data.message)
         this.lastError = `Server ${data.serverIndex}: ${data.message}`
+
+        // capture_timeout is not a reply to anything we sent — a camera has
+        // stopped delivering frames and libcamera's frontend will not recover
+        // on its own. Record it so the UI can say so and offer the restart,
+        // instead of leaving the operator staring at a frozen preview.
+        if (data.code === 'capture_timeout') {
+          const globalId = this.cameras.find(
+            cam => cam.serverIndex === data.serverIndex && cam.localId === data.cameraId
+          )?.globalId ?? null
+          this.captureTimeout = {
+            serverIndex: data.serverIndex,
+            cameraId: data.cameraId,
+            globalId,
+            stalledForUs: data.stalledForUs,
+            message: data.message,
+            backlogBytes: data.backlogBytes,
+            backlogBudgetBytes: data.backlogBudgetBytes,
+            framesDroppedBacklog: data.framesDroppedBacklog,
+            at: Date.now()
+          }
+          // It is not streaming any more, whatever the toggle says.
+          const camera = this.cameras.find(cam => cam.globalId === globalId)
+          if (camera) {
+            camera.clientFps = 0
+            camera.serverFps = 0
+          }
+        }
       })
 
       manager.on('error', (data) => {
@@ -299,11 +353,15 @@ export const useCameraStore = defineStore('camera', {
           this.saveModeConfigured = true
         }
 
-        // Wait longer for cameras to fully initialize
-        // This gives the server time to start capturing frames
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        // Ask whether it actually happened rather than sleeping and hoping.
+        // _syncStateFromServers() drives camerasConfigured off what the
+        // servers report, so polling get_state is what makes the flag true.
+        const ok = await this._awaitServerState(() => this.camerasConfigured)
+        if (!ok) {
+          if (!this.lastError) this.lastError = 'Cameras did not reach the configured state'
+          return false
+        }
 
-        this.camerasConfigured = true
         // Limits come from ControlInfoMap, only valid once configured.
         this.serverManager.getFrameDurationLimits()
         this.serverManager.getLensPositionLimits()
@@ -325,7 +383,12 @@ export const useCameraStore = defineStore('camera', {
           output_dir: saveConfig.output_dir,
           prepend_timestamp_to_dir: saveConfig.prepend_timestamp_to_dir,
           batch_size: saveConfig.batch_size,
-          writer_threads: saveConfig.writer_threads
+          writer_threads: saveConfig.writer_threads,
+          // Resource guards (§4.5.1). Mode-independent: 0/0/false means "server
+          // decides", which is the default every config gets.
+          backlog_max_bytes: saveConfig.backlog_max_bytes,
+          disk_write_bytes_per_sec: saveConfig.disk_write_bytes_per_sec,
+          allow_overcommit: saveConfig.allow_overcommit
         }
 
         // Add checkerboard parameters if mode uses checkerboard detection
@@ -361,19 +424,78 @@ export const useCameraStore = defineStore('camera', {
       if (!this.canStartCameras) return false
 
       try {
-        // Start cameras
+        this.captureTimeout = null
         this.serverManager.startAllCameras()
 
-        // Wait a bit for cameras to start
-        await new Promise(resolve => setTimeout(resolve, 500))
-
-        this.camerasRunning = true
+        // start_cameras is not guaranteed to succeed: the server refuses a
+        // process mode it judges unable to keep up with the camera (§4.6) and
+        // stays CONFIGURED. Assuming success here would light up the UI as
+        // Running, open streams that never deliver a frame, and hand the
+        // operator a hang with no explanation — so confirm via get_state.
+        const ok = await this._awaitServerState(() => this.camerasRunning)
+        if (!ok) {
+          // A refusal already arrived as an `error` and is in lastError with
+          // the server's own reasoning; don't overwrite it with something
+          // vaguer.
+          if (!this.lastError) this.lastError = 'Cameras did not reach the running state'
+          return false
+        }
         return true
       } catch (error) {
         this.lastError = 'Failed to start cameras'
         console.error(error)
         return false
       }
+    },
+
+    // Poll get_state until `predicate` holds or the timeout expires. The
+    // server announces lifecycle transitions through `status`, never a
+    // proactive `state`, so asking is the only way to know; each reply feeds
+    // _syncStateFromServers(), which is what moves camerasConfigured /
+    // camerasRunning.
+    async _awaitServerState(predicate, timeoutMs = 8000) {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        this.serverManager.getStateAll()
+        await new Promise(resolve => setTimeout(resolve, 150))
+        if (predicate()) return true
+      }
+      return predicate()
+    },
+
+    // The documented recovery for a capture_timeout (§7.1): rebuild the
+    // pipeline with stop_cameras + start_cameras, then reopen the streams that
+    // were running. Reconfiguring is not needed.
+    async recoverCapture() {
+      if (!this.hasConnectedServers) {
+        this.lastError = 'No connected servers to recover'
+        return false
+      }
+      const wasStreaming = this.cameras.filter(cam => cam.streaming).map(cam => cam.globalId)
+
+      this.serverManager.stopAllCameras()
+      const stopped = await this._awaitServerState(() => !this.camerasRunning)
+      if (!stopped) {
+        this.lastError = 'Recovery failed: cameras did not stop'
+        return false
+      }
+
+      this.serverManager.startAllCameras()
+      const started = await this._awaitServerState(() => this.camerasRunning)
+      if (!started) {
+        if (!this.lastError) this.lastError = 'Recovery failed: cameras did not restart'
+        return false
+      }
+
+      this.captureTimeout = null
+      this.lastError = null
+      for (const globalId of wasStreaming) {
+        if (this.serverManager.startStream(globalId)) {
+          const camera = this.cameras.find(cam => cam.globalId === globalId)
+          if (camera) camera.streaming = true
+        }
+      }
+      return true
     },
 
     async stopAllCameras() {
@@ -390,6 +512,9 @@ export const useCameraStore = defineStore('camera', {
         // stop_cameras moves server from RUNNING → CONFIGURED
         this.serverManager.stopAllCameras()
 
+        // Whatever stalled is moot once capture is torn down; a fresh start
+        // gets a fresh watchdog.
+        this.captureTimeout = null
         this.camerasRunning = false
         // camerasConfigured stays true — server is now in CONFIGURED state
         return true
@@ -634,6 +759,11 @@ export const useCameraStore = defineStore('camera', {
 
     clearError() {
       this.lastError = null
+    },
+
+    // Dismiss the "frames were dropped" notice from the last capture.
+    clearDroppedNotice() {
+      this.lastFramesDroppedBacklog = 0
     },
 
     // Get optimal grid dimensions based on number of streaming cameras
