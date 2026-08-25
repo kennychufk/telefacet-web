@@ -11,7 +11,9 @@ export const useCameraStore = defineStore('camera', {
 
     // Server management
     serverManager: null,
-    servers: [], // Array of { index, address, connected, cameras }
+    // Array of { index, address, role, connected, cameras, serverState,
+    //            commanderConnected, observerConnected, ... }
+    servers: [],
 
     // Camera management
     cameras: [], // Array of { globalId, serverIndex, localId, streaming, fps, framesSaved }
@@ -69,6 +71,29 @@ export const useCameraStore = defineStore('camera', {
     // A camera has died and needs stop_cameras + start_cameras to come back.
     hasCaptureTimeout: (state) => state.captureTimeout !== null,
 
+    // Client roles (protocol §1.1). Commander servers are the ones this client
+    // drives; observer servers are watched read-only and wait for someone else
+    // to run their cameras.
+    commanderServers: (state) => state.servers.filter(s => s.role !== 'observer'),
+    observerServers: (state) => state.servers.filter(s => s.role === 'observer'),
+    hasCommanderServers: (state) => state.servers.some(s => s.role !== 'observer'),
+    hasObserverServers: (state) => state.servers.some(s => s.role === 'observer'),
+    // Pure telemetry session: nothing to configure or start from here.
+    observerOnly: (state) =>
+      state.servers.length > 0 && state.servers.every(s => s.role === 'observer'),
+
+    allCommanderServersConnected: (state) => {
+      const commanders = state.servers.filter(s => s.role !== 'observer')
+      return commanders.length > 0 && commanders.every(s => s.connected)
+    },
+
+    // Observer servers whose cameras are not running — the CCTV view is
+    // waiting on a commander (absent, or present but not started).
+    waitingObserverServers: (state) =>
+      state.servers.filter(
+        s => s.role === 'observer' && s.connected && s.serverState !== 'running'
+      ),
+
     connectedServers: (state) => {
       return state.servers.filter(server => server.connected)
     },
@@ -82,18 +107,18 @@ export const useCameraStore = defineStore('camera', {
       return state.servers.some(server => server.connected)
     },
 
-    canConfigure: (state) => {
+    canConfigure(state) {
       return state.configLoaded &&
-        state.allServersConnected &&
+        this.allCommanderServersConnected &&
         !state.camerasConfigured
     },
 
-    canStartCameras: (state) => {
-      return state.camerasConfigured && !state.camerasRunning
+    canStartCameras(state) {
+      return this.hasCommanderServers && state.camerasConfigured && !state.camerasRunning
     },
 
-    canStopCameras: (state) => {
-      return state.camerasRunning
+    canStopCameras(state) {
+      return this.hasCommanderServers && state.camerasRunning
     },
 
     allStreaming: (state) => {
@@ -113,7 +138,7 @@ export const useCameraStore = defineStore('camera', {
       return state.config?.processing?.mode === 'trigger' &&
         state.camerasRunning &&
         state.triggerPendingServers === 0 &&
-        state.servers.some(server => server.connected)
+        state.servers.some(server => server.connected && server.role !== 'observer')
     }
   },
 
@@ -148,19 +173,29 @@ export const useCameraStore = defineStore('camera', {
       this.servers = this.config.servers.map((server, index) => ({
         index,
         address: server.address,
+        role: server.role === 'observer' ? 'observer' : 'commander',
         sensor: server.sensor,
         width: server.width,
         height: server.height,
+        subsample: server.subsample || 1,
+        maxFps: server.max_fps || 0,
         connected: false,
         cameras: 0,
-        serverState: 'unknown'
+        serverState: 'unknown',
+        // Who else is on the server, from the `state` reply/pushes (§3.1).
+        // null until the first `state` arrives.
+        commanderConnected: null,
+        observerConnected: null
       }))
 
       // Add servers to manager
       this.servers.forEach(server => {
         this.serverManager.addServer(server.address, server.index, {
+          role: server.role,
           sensor: server.sensor,
-          cameraConfig: { width: server.width, height: server.height }
+          cameraConfig: { width: server.width, height: server.height },
+          subsample: server.subsample,
+          maxFps: server.maxFps
         })
       })
 
@@ -184,16 +219,29 @@ export const useCameraStore = defineStore('camera', {
         if (server) {
           server.connected = false
           server.serverState = 'unknown'
+          server.commanderConnected = null
+          server.observerConnected = null
           console.warn(`⚠️ Server ${serverIndex} disconnected`)
+          // The server dropped this connection's subscriptions.
+          this._markServerStreams(serverIndex, false)
         }
         this._syncStateFromServers()
       })
 
-      manager.on('server-state', ({ serverIndex, state }) => {
+      manager.on('server-state', ({ serverIndex, state, cause, commanderConnected, observerConnected }) => {
         const server = this.servers.find(s => s.index === serverIndex)
         if (server) {
+          const wasRunning = server.serverState === 'running'
           server.serverState = state
-          console.log(`Server ${serverIndex} reported state: ${state}`)
+          if (typeof commanderConnected === 'boolean') server.commanderConnected = commanderConnected
+          if (typeof observerConnected === 'boolean') server.observerConnected = observerConnected
+          console.log(`Server ${serverIndex} reported state: ${state} (${cause || 'query'})`)
+          // An observer's subscriptions survive the commander stopping the
+          // cameras (§4.7); only the frames pause. Zero the rates so the UI
+          // does not show a stale fps over a frozen picture.
+          if (wasRunning && state !== 'running' && server.role === 'observer') {
+            this._zeroServerFps(serverIndex)
+          }
         }
         this._syncStateFromServers()
       })
@@ -339,6 +387,45 @@ export const useCameraStore = defineStore('camera', {
       }))
 
       this.totalCameras = this.cameras.length
+      this.autoSubscribeObservers()
+    },
+
+    // An observer is a CCTV view: subscribe to every camera of every observer
+    // server as soon as it is discovered. The subscription is persistent on
+    // the server (§4.7) — it waits for the cameras to run and survives the
+    // commander's stop/start cycles — so this is a one-off per connection.
+    // Idempotent: a camera already subscribed on its current connection is
+    // skipped (discovery fires the camera-map rebuild twice).
+    autoSubscribeObservers() {
+      if (!this.serverManager) return
+      for (const camera of this.cameras) {
+        if (!this.serverManager.isObserverCamera(camera.globalId)) continue
+        if (this.serverManager.isStreaming(camera.globalId) ||
+            this.serverManager.startStream(camera.globalId)) {
+          camera.streaming = true
+        }
+      }
+    },
+
+    _markServerStreams(serverIndex, streaming) {
+      for (const camera of this.cameras) {
+        if (camera.serverIndex !== serverIndex) continue
+        camera.streaming = streaming
+        camera.clientFps = 0
+        camera.serverFps = 0
+      }
+    },
+
+    _zeroServerFps(serverIndex) {
+      for (const camera of this.cameras) {
+        if (camera.serverIndex !== serverIndex) continue
+        camera.clientFps = 0
+        camera.serverFps = 0
+      }
+    },
+
+    isObserverCamera(globalId) {
+      return !!this.serverManager?.isObserverCamera(globalId)
     },
 
     async configureAllCameras() {
@@ -449,10 +536,10 @@ export const useCameraStore = defineStore('camera', {
     },
 
     // Poll get_state until `predicate` holds or the timeout expires. The
-    // server announces lifecycle transitions through `status`, never a
-    // proactive `state`, so asking is the only way to know; each reply feeds
-    // _syncStateFromServers(), which is what moves camerasConfigured /
-    // camerasRunning.
+    // server pushes `state` on every transition (§3.1), but polling is what
+    // makes a *refused* transition observable within a bounded time; each
+    // reply feeds _syncStateFromServers(), which is what moves
+    // camerasConfigured / camerasRunning.
     async _awaitServerState(predicate, timeoutMs = 8000) {
       const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
@@ -502,8 +589,11 @@ export const useCameraStore = defineStore('camera', {
       if (!this.canStopCameras) return false
 
       try {
-        // Clear client-side streaming state (server's stop_cameras also stops streams)
+        // Clear client-side streaming state for the cameras we command (the
+        // server's stop_cameras drops the commander's streams). Observer
+        // subscriptions are persistent and stay put.
         this.cameras.forEach(camera => {
+          if (this.isObserverCamera(camera.globalId)) return
           camera.streaming = false
           camera.clientFps = 0
           camera.serverFps = 0
@@ -543,7 +633,14 @@ export const useCameraStore = defineStore('camera', {
     },
 
     _syncStateFromServers() {
-      const connected = this.servers.filter(s => s.connected)
+      // The aggregate flags describe the servers this client commands. In a
+      // pure observer session there is nothing to command, so they describe
+      // the watched servers instead (a "running" observer session is one whose
+      // commanders have started the cameras).
+      const commanders = this.servers.filter(s => s.connected && s.role !== 'observer')
+      const connected = commanders.length > 0
+        ? commanders
+        : this.servers.filter(s => s.connected)
       if (connected.length === 0) {
         this.camerasConfigured = false
         this.camerasRunning = false
@@ -704,13 +801,16 @@ export const useCameraStore = defineStore('camera', {
     },
 
     startAllStreams() {
-      if (!this.camerasRunning) {
+      const pending = this.cameras.filter(cam => !cam.streaming)
+      if (pending.length === 0) return true
+
+      // Observer subscriptions may be made in any state; commander streams
+      // need the cameras running.
+      const needsRunning = pending.some(cam => !this.isObserverCamera(cam.globalId))
+      if (needsRunning && !this.camerasRunning) {
         this.lastError = 'Cameras must be running to stream'
         return false
       }
-
-      const pending = this.cameras.filter(cam => !cam.streaming)
-      if (pending.length === 0) return true
 
       pending.forEach(camera => {
         if (this.serverManager.startStream(camera.globalId)) {
@@ -724,7 +824,7 @@ export const useCameraStore = defineStore('camera', {
       const camera = this.cameras.find(cam => cam.globalId === globalId)
       if (!camera) return false
 
-      if (!this.camerasRunning) {
+      if (!this.camerasRunning && !this.isObserverCamera(globalId)) {
         this.lastError = 'Cameras must be running to stream'
         return false
       }

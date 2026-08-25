@@ -65,16 +65,38 @@
             v-for="srv in store.servers"
             :key="srv.index"
             class="server-row"
+            :title="serverTitle(srv)"
           >
             <LiveDot :on="srv.connected" color="var(--live)" />
             <span class="server-addr">{{ srv.address.replace(/^wss?:\/\//, '') }}</span>
+            <span
+              v-if="srv.role === 'observer'"
+              class="server-role"
+              title="Read-only observer connection: this client only watches"
+            >obs</span>
             <span v-if="srv.sensor" class="server-sensor">{{ srv.sensor }}</span>
             <span class="server-cams">{{ srv.cameras }}×</span>
           </div>
         </section>
 
-        <!-- Pipeline -->
-        <section v-if="appState" class="section">
+        <!-- Observed servers: what we are waiting on, if anything. The
+             cameras of an observer server are run by some other client (the
+             commander); this panel can only watch. -->
+        <section v-if="store.hasObserverServers" class="section">
+          <div class="section-label">Observing</div>
+          <div
+            v-for="srv in store.observerServers"
+            :key="srv.index"
+            class="observe-row"
+            :class="observeClass(srv)"
+          >
+            <span class="observe-state">{{ observeState(srv) }}</span>
+            <span class="observe-detail">{{ observeDetail(srv) }}</span>
+          </div>
+        </section>
+
+        <!-- Pipeline (only for servers this client commands) -->
+        <section v-if="appState && store.hasCommanderServers" class="section">
           <div class="section-label">Pipeline</div>
           <Pipeline
             :state="appState"
@@ -94,8 +116,9 @@
               v-for="cam in store.cameras"
               :key="cam.globalId"
               class="cam-chip"
-              :class="{ active: cam.streaming }"
-              :disabled="!store.camerasRunning"
+              :class="{ active: cam.streaming, observed: store.isObserverCamera(cam.globalId) }"
+              :disabled="!store.camerasRunning && !store.isObserverCamera(cam.globalId)"
+              :title="store.isObserverCamera(cam.globalId) ? 'Observed camera: subscription persists until a commander stops it for good' : undefined"
               @click="store.toggleCameraStream(cam.globalId)"
             >
               <span>cam{{ String(cam.globalId).padStart(2, '0') }}</span>
@@ -129,7 +152,7 @@
         </section>
 
         <!-- Trigger (save-on-demand; only exists in the `trigger` mode) -->
-        <section v-if="store.isTriggerMode" class="section">
+        <section v-if="store.isTriggerMode && store.hasCommanderServers" class="section">
           <div class="section-label">Trigger</div>
           <button
             class="trigger-btn"
@@ -147,14 +170,14 @@
           <div class="trigger-note">{{ triggerHint }}</div>
         </section>
 
-        <!-- Exposure & frame rate -->
-        <section v-if="store.hasConnectedServers" class="section">
+        <!-- Exposure & frame rate (camera attributes: commander only) -->
+        <section v-if="store.hasConnectedServers && store.hasCommanderServers" class="section">
           <div class="section-label">Exposure</div>
           <ExposureSection :disabled="!store.camerasConfigured" />
         </section>
 
-        <!-- Focus -->
-        <section v-if="store.hasConnectedServers" class="section last">
+        <!-- Focus (camera attributes: commander only) -->
+        <section v-if="store.hasConnectedServers && store.hasCommanderServers" class="section last">
           <div class="section-label">Focus</div>
           <FocusSection :disabled="!store.camerasConfigured" />
         </section>
@@ -175,9 +198,17 @@
               at the server's backlog budget, so its memory budget is the likely cause.
             </template>
           </div>
-          <button class="stall-action" :disabled="recovering" @click="onRecover">
+          <button
+            v-if="store.hasCommanderServers"
+            class="stall-action"
+            :disabled="recovering"
+            @click="onRecover"
+          >
             {{ recovering ? 'Restarting…' : 'Restart capture' }}
           </button>
+          <div v-else class="stall-body">
+            Only the commander can restart capture; this client is an observer.
+          </div>
         </div>
 
         <!-- Frames the server refused at its backlog budget: the recording
@@ -200,7 +231,7 @@
       <footer class="foot">
         <div class="kbd"><span class="key">P</span><span class="sep">·</span><span class="meaning">panel</span></div>
         <div class="kbd"><span class="key">H</span><span class="sep">·</span><span class="meaning">header only</span></div>
-        <div class="kbd"><span class="key">R</span><span class="sep">·</span><span class="meaning">reset counts</span></div>
+        <div v-if="store.hasCommanderServers" class="kbd"><span class="key">R</span><span class="sep">·</span><span class="meaning">reset counts</span></div>
         <div class="kbd"><span class="key">D</span><span class="sep">·</span><span class="meaning">debug</span></div>
         <div v-if="store.isTriggerMode" class="kbd"><span class="key">T</span><span class="sep">·</span><span class="meaning">trigger</span></div>
       </footer>
@@ -229,6 +260,39 @@ const appState = computed(() => {
   if (!store.camerasRunning) return 'configured'
   return 'running'
 })
+
+// Observer servers: what the watched server is doing, and whether anyone is
+// there to change it.
+function observeState(srv) {
+  if (!srv.connected) return 'offline'
+  if (srv.serverState === 'running') return 'live'
+  return 'waiting'
+}
+
+function observeDetail(srv) {
+  if (!srv.connected) return 'reconnecting…'
+  if (srv.serverState === 'running') return 'commander is streaming'
+  if (srv.commanderConnected === false) return 'no commander connected'
+  if (srv.commanderConnected === true) {
+    return srv.serverState === 'configured'
+      ? 'commander has not started the cameras'
+      : 'commander has not configured the cameras'
+  }
+  return 'cameras not running'
+}
+
+function observeClass(srv) {
+  return { live: srv.connected && srv.serverState === 'running', offline: !srv.connected }
+}
+
+function serverTitle(srv) {
+  const role = srv.role === 'observer' ? 'observer (read-only)' : 'commander'
+  const state = srv.connected ? srv.serverState : 'disconnected'
+  const others = srv.commanderConnected === null
+    ? ''
+    : `\ncommander ${srv.commanderConnected ? 'present' : 'absent'}, observer ${srv.observerConnected ? 'present' : 'absent'}`
+  return `${role} · ${state}${others}`
+}
 
 async function loadFile(file) {
   if (!file) return
@@ -490,6 +554,45 @@ async function toggleHeaderOnly() {
   flex-shrink: 0;
 }
 
+.server-role {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  border-radius: 3px;
+  padding: 0 3px;
+  flex-shrink: 0;
+}
+
+/* Observed servers */
+.observe-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 16px;
+  font-size: 10.5px;
+}
+
+.observe-state {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--warn);
+  flex-shrink: 0;
+  width: 46px;
+}
+
+.observe-row.live .observe-state { color: var(--live); }
+.observe-row.offline .observe-state { color: var(--text-sec); }
+
+.observe-detail {
+  color: var(--text-mid);
+  line-height: 1.3;
+}
+
 /* Cameras */
 .cam-grid {
   display: grid;
@@ -522,6 +625,10 @@ async function toggleHeaderOnly() {
   border-color: color-mix(in oklch, var(--live) 38%, transparent);
   background: var(--live-dim);
   color: var(--live);
+}
+
+.cam-chip.observed.active {
+  border-style: dashed;
 }
 
 .cam-chip:disabled {

@@ -17,6 +17,11 @@ booting a browser or the Vue app.
 | `protocol-rejection.test.js` | Unit-level: spins an in-process `ws` server, validates v1/v2 CHUN handling |
 | `resource-guards.test.js` | Backlog budget, the `start_cameras` feasibility refusal, and the shape of coded `error` payloads |
 | `store-lifecycle.test.js` | Drives the Pinia store rather than `WebSocketManager`: guards that a refused `start_cameras` is reported as failure instead of assumed success |
+| `observer.test.js` | Commander + observer roles against one server: the `/observer` path, `code: "forbidden"` refusals, pushed `state` messages, a persistent subsampled observer subscription across the commander's stop/start, and `MultiServerManager` keeping write broadcasts away from observer servers. Sensor-aware (`TELEFACET_SENSOR` / `TELEFACET_WIDTH` / `TELEFACET_HEIGHT`). |
+
+Hardware-free unit tests for the role plumbing (config `role`/`subsample`/`max_fps`,
+`WebSocketManager.roleUrl`, observer reconnect policy, `start_stream` wire options)
+live in `test/unit/roles.test.js` — `npm run test:unit`.
 
 ## Install
 

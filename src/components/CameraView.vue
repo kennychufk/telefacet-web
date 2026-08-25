@@ -13,15 +13,17 @@
     />
 
     <!-- Detection overlay: checkerboard corners (green) and ArUco markers
-         (amber). Same intrinsic pixel size as the WebGL canvas so
-         server-supplied full-frame coordinates map 1:1. Hidden alongside the
-         main canvas in header-only mode. -->
+         (amber). Sized from the frames actually received — the server's
+         coordinates are in the streamed frame's pixel space, which differs
+         from the configured size whenever libcamera snaps the resolution or
+         the stream is subsampled — so they map 1:1. Hidden alongside the main
+         canvas in header-only mode. -->
     <canvas
       ref="overlayCanvas"
       class="canvas overlay"
       :class="{ hidden: isHeaderOnlyMode }"
-      :width="canvasWidth"
-      :height="canvasHeight"
+      :width="frameWidth"
+      :height="frameHeight"
     />
 
     <!-- Hover overlay (image mode) -->
@@ -87,6 +89,12 @@
       </div>
     </div>
 
+    <!-- Observed camera whose server is not running: the subscription is
+         parked until a commander starts the cameras (protocol §4.7). -->
+    <div v-if="streaming && observerWaiting" class="no-signal waiting">
+      <span>{{ waitingLabel }}</span>
+    </div>
+
     <!-- No signal -->
     <div v-if="!streaming" class="no-signal">
       <span>NO SIGNAL</span>
@@ -133,7 +141,22 @@ const ARUCO_DOT_RADIUS_PX = 4
 const ownServer = computed(() => store.servers.find(s => s.index === props.camera.serverIndex))
 const canvasWidth = computed(() => ownServer.value?.width || 1456)
 const canvasHeight = computed(() => ownServer.value?.height || 1088)
+// Geometry of the frames actually arriving (the WebGL canvas follows it in
+// Debayer.processFrame; the overlay canvas follows it here).
+const frameWidth = ref(canvasWidth.value)
+const frameHeight = ref(canvasHeight.value)
 const streaming = computed(() => props.camera.streaming)
+// An observed camera is "streaming" (subscribed) even while the watched
+// server's cameras are stopped; say so instead of freezing the last frame.
+const observerWaiting = computed(
+  () => ownServer.value?.role === 'observer' && ownServer.value?.serverState !== 'running'
+)
+const waitingLabel = computed(() => {
+  const srv = ownServer.value
+  if (!srv?.connected) return 'RECONNECTING'
+  if (srv.commanderConnected === false) return 'WAITING FOR COMMANDER'
+  return 'CAMERAS STOPPED'
+})
 const isHeaderOnlyMode = computed(() => store.headerOnlyMode)
 const paddedId = computed(() => String(props.camera.globalId).padStart(2, '0'))
 
@@ -191,6 +214,10 @@ function setupFrameListener() {
   frameHandler = (data) => {
     if (data.globalCameraId !== props.camera.globalId) return
     latestFrameId.value = data.frameId
+    if (data.width > 0 && data.height > 0) {
+      frameWidth.value = data.width
+      frameHeight.value = data.height
+    }
     if (typeof data.lensPosition === 'number') latestLensPosition.value = data.lensPosition
     if (typeof data.afState === 'number') latestAfState.value = data.afState
 
@@ -340,6 +367,15 @@ watch(() => store.headerOnlyMode, (on) => {
     blackFrameRendered = true
   } else {
     blackFrameRendered = false
+  }
+})
+
+// When the watched server stops its cameras, blank the tile rather than
+// leaving the last frame frozen behind the "CAMERAS STOPPED" label.
+watch(observerWaiting, (waiting) => {
+  if (waiting && streaming.value) {
+    frameQueue.length = 0
+    renderBlackFrame()
   }
 })
 
@@ -553,6 +589,10 @@ watch(streaming, (on) => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.no-signal.waiting {
+  color: var(--warn);
 }
 
 .no-signal span {

@@ -36,10 +36,13 @@ const showDebugPanel = ref(false)
 
 const appState = computed(() => {
   if (!store.configLoaded || !store.hasConnectedServers) return null
+  // Observer subscriptions exist before the cameras run (they wait), so a
+  // subscribed camera always gets a tile — it shows what it is waiting for.
+  if (store.streamingCameras.length > 0) return 'streaming'
+  if (!store.hasCommanderServers) return 'observing'
   if (!store.camerasConfigured) return 'connected'
   if (!store.camerasRunning) return 'configured'
-  if (store.streamingCameras.length === 0) return 'running'
-  return 'streaming'
+  return 'running'
 })
 
 const statusMessage = computed(() => {
@@ -47,6 +50,9 @@ const statusMessage = computed(() => {
     case 'connected':  return 'READY — CONFIGURE CAMERAS'
     case 'configured': return 'CONFIGURED — START CAMERAS'
     case 'running':    return 'RUNNING — PRESS STREAM'
+    case 'observing':  return store.totalCameras > 0
+      ? 'OBSERVING — SUBSCRIBING TO CAMERAS'
+      : 'OBSERVING — WAITING FOR CAMERAS'
     default:           return 'LOAD CONFIG TO BEGIN'
   }
 })
@@ -63,7 +69,7 @@ async function handleKeyPress(event) {
     store.headerOnlyMode = next
     await store.setHeaderOnlyMode(next)
   } else if (k === 'r') {
-    if (store.hasConnectedServers) await store.resetFrameCounts()
+    if (store.hasConnectedServers && store.hasCommanderServers) await store.resetFrameCounts()
   } else if (k === 'd') {
     showDebugPanel.value = !showDebugPanel.value
   } else if (k === 't') {

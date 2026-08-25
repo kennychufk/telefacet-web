@@ -16,24 +16,50 @@ const createLogger = (prefix) => {
   }
 }
 
+export const ROLE_COMMANDER = 'commander'
+export const ROLE_OBSERVER = 'observer'
+
 export class WebSocketManager extends EventEmitter {
   constructor(serverAddress, serverIndex, options = {}) {
     super()
     this.address = serverAddress
     this.serverIndex = serverIndex
+    // Client role (protocol §1.1). The commander (default) is the read-write
+    // client that owns the camera lifecycle; the observer is read-only and
+    // connects to the server's `/observer` path. The server holds one of each.
+    this.role = options.role === ROLE_OBSERVER ? ROLE_OBSERVER : ROLE_COMMANDER
+    this.url = WebSocketManager.roleUrl(serverAddress, this.role)
     // Per-server sensor type and resolution (optional — omitted fields fall
     // back to the server's own defaults). Different servers may run
     // different sensors, but every camera on one server shares the same one.
     this.sensor = options.sensor
     this.cameraConfig = options.cameraConfig || {}
+    // Default start_stream options for every camera on this server (§4.7):
+    // subsample decimates the payload, maxFps caps delivery (0 = uncapped).
+    this.streamOptions = {
+      subsample: options.subsample || 1,
+      maxFps: options.maxFps || 0
+    }
     this.ws = null
     this.connected = false
     this.reconnectAttempts = 0
     this.maxReconnectAttempts = 10
     this.reconnectDelay = 1000
+    // An observer exists to wait: for a server that is not up yet, for a
+    // commander to start the cameras, for the observer slot to free. So it
+    // retries the initial connection too, and never gives up. A commander
+    // keeps the original behaviour (reconnect only after a successful
+    // connection, bounded attempts).
+    this.retryInitialConnect = this.role === ROLE_OBSERVER
+    if (this.role === ROLE_OBSERVER) this.maxReconnectAttempts = Infinity
     this.cameras = []
     this.streamingCameras = new Set()
     this.headerOnlyMode = false // Track header only mode state
+    // Lifecycle state as last reported by the server (`state` reply or push),
+    // plus who else is connected to it (protocol §3.1).
+    this.serverState = 'unknown'
+    this.commanderConnected = null
+    this.observerConnected = null
 
     // Frame statistics
     this.frameStats = new Map()
@@ -45,7 +71,9 @@ export class WebSocketManager extends EventEmitter {
     this.CHUNK_DATA_MAGIC = 0x43484E4B  // 'CHNK' in hex
 
     // Enhanced logging
-    this.logger = createLogger(`Server${serverIndex}`)
+    this.logger = createLogger(
+      this.role === ROLE_OBSERVER ? `Server${serverIndex}/observer` : `Server${serverIndex}`
+    )
 
     // Connection state tracking
     this.connectionState = 'disconnected'
@@ -65,12 +93,32 @@ export class WebSocketManager extends EventEmitter {
     this.chunkCleanupInterval = setInterval(() => this.cleanupOldChunks(), 5000)
   }
 
+  /**
+   * The URL a client of `role` connects to (protocol §1.1): observers use the
+   * server's `/observer` path; commanders use the address verbatim (the bare
+   * URL is the commander path, so pre-role configs keep working unchanged).
+   */
+  static roleUrl(address, role) {
+    if (role !== ROLE_OBSERVER) return address
+    try {
+      const url = new URL(address)
+      url.pathname = url.pathname.replace(/\/+$/, '') + '/observer'
+      return url.toString()
+    } catch (_) {
+      return address.replace(/\/+$/, '') + '/observer'
+    }
+  }
+
+  get isObserver() {
+    return this.role === ROLE_OBSERVER
+  }
+
   connect() {
     try {
       this.connectionState = 'connecting'
-      this.logger.info(`Connecting to ${this.address}...`)
+      this.logger.info(`Connecting to ${this.url} as ${this.role}...`)
 
-      this.ws = new WebSocket(this.address)
+      this.ws = new WebSocket(this.url)
       this.ws.binaryType = 'arraybuffer'
 
       const connectionTimeout = setTimeout(() => {
@@ -110,8 +158,14 @@ export class WebSocketManager extends EventEmitter {
 
         this.emit('disconnected', this.serverIndex)
         this.chunkBuffers.clear()
+        // The server drops this connection's subscriptions (both roles), so
+        // whatever we re-subscribe after a reconnect must be sent afresh.
+        this.streamingCameras.clear()
+        this.serverState = 'unknown'
+        this.commanderConnected = null
+        this.observerConnected = null
 
-        if (wasConnected) {
+        if (wasConnected || this.retryInitialConnect) {
           this.handleReconnect()
         }
       }
@@ -479,10 +533,24 @@ export class WebSocketManager extends EventEmitter {
           break
 
         case 'state':
-          this.logger.info('Server state:', message.state)
+          // Both the get_state reply (cause "query") and the server's
+          // unsolicited pushes on every transition and on the other role's
+          // connect/disconnect (protocol §3.1) — same shape, so one handler.
+          this.serverState = message.state
+          if (typeof message.commander_connected === 'boolean') {
+            this.commanderConnected = message.commander_connected
+          }
+          if (typeof message.observer_connected === 'boolean') {
+            this.observerConnected = message.observer_connected
+          }
+          this.logger.info(`Server state: ${message.state} (${message.cause || 'query'})`)
           this.emit('server-state', {
             serverIndex: this.serverIndex,
-            state: message.state
+            state: message.state,
+            cause: message.cause || 'query',
+            role: message.role || null,
+            commanderConnected: this.commanderConnected,
+            observerConnected: this.observerConnected
           })
           break
 
@@ -772,13 +840,29 @@ export class WebSocketManager extends EventEmitter {
     return this.send({ cmd: 'start_cameras' })
   }
 
-  startStream(cameraId) {
-    this.logger.info(`Starting stream for camera ${cameraId}`)
-    if (this.send({ cmd: 'start_stream', camera_id: cameraId })) {
+  /**
+   * Subscribe to a camera's frames (§4.7). `options` override this server's
+   * configured stream options for the call: `{ subsample, maxFps }`. Only
+   * non-default values go on the wire, so a plain call is byte-identical to
+   * the pre-role command. For an observer the subscription is persistent —
+   * allowed in any state and kept across the commander's stop/start cycles.
+   */
+  startStream(cameraId, options = {}) {
+    const subsample = options.subsample ?? this.streamOptions.subsample
+    const maxFps = options.maxFps ?? this.streamOptions.maxFps
+    const command = { cmd: 'start_stream', camera_id: cameraId }
+    if (subsample && subsample !== 1) command.subsample = subsample
+    if (maxFps && maxFps > 0) command.max_fps = maxFps
+    this.logger.info(`Starting stream for camera ${cameraId}`, command)
+    if (this.send(command)) {
       this.streamingCameras.add(cameraId)
       return true
     }
     return false
+  }
+
+  isStreaming(cameraId) {
+    return this.streamingCameras.has(cameraId)
   }
 
   stopStream(cameraId) {
@@ -824,6 +908,9 @@ export class WebSocketManager extends EventEmitter {
   getStats() {
     return {
       ...this.stats,
+      role: this.role,
+      serverState: this.serverState,
+      commanderConnected: this.commanderConnected,
       connectionState: this.connectionState,
       connected: this.connected,
       reconnectAttempts: this.reconnectAttempts,
@@ -851,7 +938,7 @@ export class MultiServerManager extends EventEmitter {
   }
 
   addServer(address, index, options = {}) {
-    this.logger.info(`Adding server ${index} at ${address}`)
+    this.logger.info(`Adding server ${index} at ${address} (${options.role || ROLE_COMMANDER})`)
     const manager = new WebSocketManager(address, index, options)
 
     // Forward events with global camera IDs
@@ -949,30 +1036,44 @@ export class MultiServerManager extends EventEmitter {
     }
   }
 
+  // Servers this client commands (read-write). Every lifecycle / attribute
+  // broadcast below goes to these only: an observer connection would just be
+  // refused with `code: "forbidden"` (protocol §1.1).
+  get commanderServers() {
+    return Array.from(this.servers.values()).filter(s => !s.isObserver)
+  }
+
+  get observerServers() {
+    return Array.from(this.servers.values()).filter(s => s.isObserver)
+  }
+
+  hasCommanders() {
+    return this.commanderServers.length > 0
+  }
+
+  // Connected commander servers, i.e. the ones a write broadcast reaches.
+  connectedCommanders() {
+    return this.commanderServers.filter(s => s.connected)
+  }
+
   configureAll() {
-    this.logger.info('Configuring all servers')
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.configureCameras(server.cameraConfig)
-      }
+    this.logger.info('Configuring all commanded servers')
+    for (const server of this.connectedCommanders()) {
+      server.configureCameras(server.cameraConfig)
     }
   }
 
   unconfigureAll() {
-    this.logger.info('Unconfiguring all servers')
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.unconfigure()
-      }
+    this.logger.info('Unconfiguring all commanded servers')
+    for (const server of this.connectedCommanders()) {
+      server.unconfigure()
     }
   }
 
   setSaveModeAll(mode, params) {
-    this.logger.info(`Setting save mode ${mode} on all servers`)
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.setSaveMode(mode, params)
-      }
+    this.logger.info(`Setting save mode ${mode} on all commanded servers`)
+    for (const server of this.connectedCommanders()) {
+      server.setSaveMode(mode, params)
     }
   }
 
@@ -983,10 +1084,10 @@ export class MultiServerManager extends EventEmitter {
    * @returns {number} how many servers the request was sent to.
    */
   triggerCaptureAll({ skipFrames } = {}) {
-    this.logger.info('Trigger capture on all servers')
+    this.logger.info('Trigger capture on all commanded servers')
     let sent = 0
-    for (const server of this.servers.values()) {
-      if (server.connected && server.triggerCapture({ skipFrames })) sent++
+    for (const server of this.connectedCommanders()) {
+      if (server.triggerCapture({ skipFrames })) sent++
     }
     return sent
   }
@@ -1001,29 +1102,23 @@ export class MultiServerManager extends EventEmitter {
   }
 
   setLensPositionAll(lensPosition) {
-    this.logger.info(`Setting lens position to ${lensPosition} on all servers`)
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.setLensPosition(lensPosition)
-      }
+    this.logger.info(`Setting lens position to ${lensPosition} on all commanded servers`)
+    for (const server of this.connectedCommanders()) {
+      server.setLensPosition(lensPosition)
     }
   }
 
   setExposureTimeAll(exposureTime) {
-    this.logger.info(`Setting exposure time to ${exposureTime} on all servers`)
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.setExposureTime(exposureTime)
-      }
+    this.logger.info(`Setting exposure time to ${exposureTime} on all commanded servers`)
+    for (const server of this.connectedCommanders()) {
+      server.setExposureTime(exposureTime)
     }
   }
 
   setFrameDurationAll(frameDuration) {
-    this.logger.info(`Setting frame duration to ${frameDuration} on all servers`)
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.setFrameDuration(frameDuration)
-      }
+    this.logger.info(`Setting frame duration to ${frameDuration} on all commanded servers`)
+    for (const server of this.connectedCommanders()) {
+      server.setFrameDuration(frameDuration)
     }
   }
 
@@ -1047,10 +1142,10 @@ export class MultiServerManager extends EventEmitter {
     return false
   }
 
-  // Re-query every connected server's lifecycle state. The server reports
-  // transitions via `status`, not a proactive `state`, so a caller that needs
-  // to know whether a transition actually happened has to ask — start_cameras
-  // can be refused (§4.6) and leave the server sitting at CONFIGURED.
+  // Re-query every connected server's lifecycle state. The server also pushes
+  // `state` on every transition (§3.1), but asking is still the robust way to
+  // confirm a transition actually happened — start_cameras can be refused
+  // (§4.6) and leave the server sitting at CONFIGURED.
   getStateAll() {
     for (const server of this.servers.values()) {
       if (server.connected) {
@@ -1060,42 +1155,53 @@ export class MultiServerManager extends EventEmitter {
   }
 
   startAllCameras() {
-    this.logger.info('Starting cameras on all servers')
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.startCameras()
-      }
+    this.logger.info('Starting cameras on all commanded servers')
+    for (const server of this.connectedCommanders()) {
+      server.startCameras()
     }
   }
 
   stopAllCameras() {
-    this.logger.info('Stopping cameras on all servers')
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.stopCameras()
-      }
+    this.logger.info('Stopping cameras on all commanded servers')
+    for (const server of this.connectedCommanders()) {
+      server.stopCameras()
     }
   }
 
   resetFrameCountsAll() {
-    this.logger.info('Resetting frame counts on all servers')
-    for (const server of this.servers.values()) {
-      if (server.connected) {
-        server.resetFrameCounts()
-      }
+    this.logger.info('Resetting frame counts on all commanded servers')
+    for (const server of this.connectedCommanders()) {
+      server.resetFrameCounts()
     }
   }
 
-  startStream(globalCameraId) {
+  startStream(globalCameraId, options = {}) {
     const info = this.getCameraInfo(globalCameraId)
     if (info) {
       const server = this.servers.get(info.serverIndex)
       if (server && server.connected) {
         this.logger.info(`Starting stream for global camera ${globalCameraId}`)
-        return server.startStream(info.localCameraId)
+        return server.startStream(info.localCameraId, options)
       }
     }
     return false
+  }
+
+  // Whether the server owning `globalCameraId` is an observer connection.
+  isObserverCamera(globalCameraId) {
+    const info = this.getCameraInfo(globalCameraId)
+    if (!info) return false
+    const server = this.servers.get(info.serverIndex)
+    return !!(server && server.isObserver)
+  }
+
+  // Whether we have sent (and not withdrawn) a subscription for this camera
+  // on its current connection.
+  isStreaming(globalCameraId) {
+    const info = this.getCameraInfo(globalCameraId)
+    if (!info) return false
+    const server = this.servers.get(info.serverIndex)
+    return !!(server && server.connected && server.isStreaming(info.localCameraId))
   }
 
   stopStream(globalCameraId) {

@@ -41,13 +41,56 @@ npm run preview
 4. Frame streaming with binary protocol (20-byte header + frame data)
 5. Real-time WebGL debayering and display
 
+### Client Roles (protocol §1.1)
+
+The server holds one read-write **commander** and one read-only **observer**
+connection at a time. Each `servers[]` entry has a `role:` (`commander` by
+default; `observer` for a CCTV-style telemetry view of a server some *other*
+client commands). Observers connect to the server's `/observer` path
+(`WebSocketManager.roleUrl`), may only `discover` / `get_state` /
+`get_*_limits` / `start_stream` / `stop_stream` / `set_header_only`, and get
+an `error` with `code: "forbidden"` for anything else — so
+`MultiServerManager`'s write broadcasts (`configureAll`, `startAllCameras`,
+`setLensPositionAll`, …) iterate `connectedCommanders()` only, while
+`setHeaderOnlyModeAll` / `getStateAll` reach every server.
+
+Observer behaviour in this client:
+
+- `cameraStore.autoSubscribeObservers()` sends `start_stream` for every camera
+  of an observer server as soon as it is discovered. The subscription is
+  **persistent** on the server — allowed in any state, kept across the
+  commander's `stop_cameras` / `start_cameras` — so the tile just shows
+  **WAITING FOR COMMANDER** / **CAMERAS STOPPED** (`CameraView.vue`) until
+  frames flow. `stopAllCameras()` leaves observer cameras subscribed.
+- The server **pushes `state`** to both clients on every transition and when
+  the other role connects/disconnects (`cause`, `role`, `commander_connected`,
+  `observer_connected`); `WebSocketManager` folds pushes and the `get_state`
+  reply into the same `server-state` event, and the store keeps
+  `servers[].commanderConnected` for the **Observing** panel.
+- Observers retry the initial connection forever (`retryInitialConnect`,
+  `maxReconnectAttempts = Infinity`): they exist to wait. Commanders keep the
+  original bounded reconnect-after-connect behaviour.
+- Per-server stream options `subsample` (1/2/4/8; decimates the payload —
+  2 ⇒ a quarter of the bytes) and `max_fps` (0 = uncapped) go out with every
+  `start_stream` as `subsample` / `max_fps` (only when non-default). On a
+  subsampled stream the frame header's `width`/`height`/`bytes_per_line` and
+  the detection coordinates describe the decimated frame, which is why
+  `CameraView.vue` sizes its overlay canvas from the received frame.
+- The aggregate `camerasConfigured` / `camerasRunning` flags describe the
+  commander servers; in an observer-only config they describe the watched
+  servers instead. Lifecycle/attribute/trigger UI is hidden when the config has
+  no commander servers.
+- **Streaming priority** is server-side: the observer's stream yields to the
+  commander's whenever the commander's socket is congested (protocol §5.8).
+
 ### WebSocket Protocol
 
 **Text Messages (JSON)**:
 - `discover`: Request camera discovery; optional `params.sensor` selects which sensor model to enumerate (substring match against the sensor's libcamera model name, e.g. "imx519", "imx708"). The first `discover` call that matches at least one camera locks in that sensor for the rest of the server's process lifetime; a call that matches zero cameras doesn't lock anything and can be retried with a different `sensor`.
 - `configure`: Set camera parameters (width, height)
 - `start_cameras`/`stop_cameras`: Control camera lifecycle. **`start_cameras` can be refused**: the server rejects a process mode it judges unable to keep up with the camera on its hardware (e.g. `batch` at a resolution/fps the disk cannot sustain) and stays CONFIGURED, with the arithmetic in the error message. Never assume it succeeded — `cameraStore` polls `get_state` until every server reports `running`. `stop_cameras`'s status adds `frames_dropped_backlog`, the number of frames the server refused at its backlog budget (non-zero ⇒ the recording has a gap).
-- `start_stream`/`stop_stream`: Control per-camera streaming
+- `start_stream`/`stop_stream`: Control per-camera streaming. `start_stream` takes optional `max_fps` and `subsample` (see **Client Roles**).
+- `state`: reply to `get_state` (`cause: "query"`) **and an unsolicited push** on every transition / on the other role's connect or disconnect; carries `cause`, `role`, `commander_connected`, `observer_connected`.
 - `set_process_mode`: Configure per-frame processing (detection and/or saving). `params.save_frames` (default `true`) toggles disk writing independently of the mode — `false` runs the detector and streams its corners/markers but writes nothing. (Formerly `set_save_mode`.)
 - Server-pushed `error` messages carry `message` and, for coded errors, structured fields. **`code: "capture_timeout"` is unsolicited** — a camera has stopped delivering frames and libcamera's frontend will not recover on its own. It carries `camera_id`, `stalled_for_us` and the server's backlog figures. `WebSocketManager` forwards the whole payload on the `server-error` event (`code`, `cameraId`, `stalledForUs`, `backlogBytes`, `backlogBudgetBytes`, `framesDroppedBacklog`, plus the raw `data`); `cameraStore` records it as `captureTimeout` and the control panel offers `recoverCapture()` — `stop_cameras` then `start_cameras`, which is the only way back.
 - `trigger_capture`: Save one frame per running camera, on demand (`trigger` mode only — rejected with an `error` in every other mode). Optional `camera_id` narrows it to one camera; optional `skip_frames` overrides the configured `trigger_skip_frames`. Answered **asynchronously** with a `trigger_result` message (`trigger_id`, `cancelled`, `captures[] = {camera_id, frame_id, filename}`) once every armed camera has actually delivered its frame — not with a plain `status`. `WebSocketManager.triggerCapture()` sends it; the ack surfaces as the `trigger-result` event, re-forwarded by `MultiServerManager` and consumed by `cameraStore.triggerCapture()`.
@@ -64,7 +107,7 @@ npm run preview
 ### Configuration Format
 
 YAML files define:
-- Servers: one entry per server, each with a WebSocket URL (`address`) and its own optional `sensor` (model substring, e.g. "imx519", "imx708") and resolution (`width`/`height`). A client can talk to servers running different sensor types at different resolutions; within one server, every camera shares the same sensor and resolution. Omitted fields fall back to that server's own defaults.
+- Servers: one entry per server, each with a WebSocket URL (`address`), its own optional `sensor` (model substring, e.g. "imx519", "imx708") and resolution (`width`/`height`), an optional `role` (`commander` default, or `observer` — see **Client Roles**), and optional stream options `subsample` (1/2/4/8) and `max_fps` (0 = uncapped). A client can talk to servers running different sensor types at different resolutions; within one server, every camera shares the same sensor and resolution. Omitted fields fall back to that server's own defaults.
 - Frame-processing options under the `processing:` key (formerly `frame_saving:`): the `mode` (none/buffer/batch/trigger/checkerboard/checkerboard2x2/aruco/aruco2x2) plus `save_frames` (default `true`), shared across all servers
 - Resource guards under the same `processing:` key, all optional and mode-independent (see **Resource Guards** below): `backlog_max_bytes`, `disk_write_bytes_per_sec`, `allow_overcommit`
 

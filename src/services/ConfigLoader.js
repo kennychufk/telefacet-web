@@ -71,6 +71,32 @@ export class ConfigLoader {
           throw new Error(`Server ${index} ${field} must be a number`)
         }
       })
+
+      // Client role (protocol §1.1). A `commander` (the default, and what
+      // every pre-role config is) owns the camera lifecycle and attributes;
+      // an `observer` is read-only — it connects to the server's `/observer`
+      // path, can only subscribe to frames, and waits for a commander to run
+      // the cameras. The `processing:` block does not apply to observers.
+      if (server.role === undefined) {
+        server.role = 'commander'
+      } else if (server.role !== 'commander' && server.role !== 'observer') {
+        throw new Error(`Server ${index} role must be "commander" or "observer"`)
+      }
+
+      // Per-server stream options, applied to every start_stream sent to this
+      // server (protocol §4.7). Meant for observers on constrained links, but
+      // accepted for either role. subsample decimates the payload (2 ⇒ a
+      // quarter of the bytes); max_fps caps delivery (0 = uncapped).
+      if (server.subsample === undefined) {
+        server.subsample = 1
+      } else if (![1, 2, 4, 8].includes(server.subsample)) {
+        throw new Error(`Server ${index} subsample must be 1, 2, 4 or 8`)
+      }
+      if (server.max_fps === undefined) {
+        server.max_fps = 0
+      } else if (typeof server.max_fps !== 'number' || !(server.max_fps >= 0)) {
+        throw new Error(`Server ${index} max_fps must be a number >= 0 (0 = uncapped)`)
+      }
     })
 
     // Validate frame-processing configuration
@@ -249,7 +275,10 @@ export class ConfigLoader {
     return {
       servers: [
         { address: 'ws://192.168.1.100:9001', sensor: 'imx519', width: 1456, height: 1088 },
-        { address: 'ws://192.168.1.101:9001', sensor: 'imx708', width: 1536, height: 864 }
+        { address: 'ws://192.168.1.101:9001', sensor: 'imx708', width: 1536, height: 864 },
+        // Read-only telemetry view of a server some other client commands:
+        // quarter-size payload, at most 5 fps. `processing:` is ignored for it.
+        { address: 'ws://192.168.1.102:9001', role: 'observer', subsample: 2, max_fps: 5 }
       ],
       processing: {
         mode: 'none',
