@@ -153,9 +153,9 @@ const props = defineProps({
 
 const store = useCameraStore()
 
-// ── Log-scale range (100 µs → 1 s) ───────────────────────────────────────
+// ── Log-scale range (100 µs → 20 s, i.e. 10 kfps → 0.05 fps) ────────────
 const MIN_US = 100
-const MAX_US = 1_000_000
+const MAX_US = 20_000_000
 const LOG_MIN = Math.log10(MIN_US)
 const LOG_MAX = Math.log10(MAX_US)
 
@@ -177,20 +177,23 @@ function usToFps(us) {
   const fps = 1_000_000 / us
   if (fps >= 100) return fps.toFixed(0)
   if (fps >= 10) return fps.toFixed(1)
-  return fps.toFixed(2)
+  if (fps >= 1) return fps.toFixed(2)
+  return parseFloat(fps.toFixed(3)).toString()
 }
 function fpsToUs(fps) { return Math.round(1_000_000 / fps) }
 
 const TICKS = [
-  { us: 100,     label: '10kfps' },
-  { us: 1000,    label: '1kfps' },
-  { us: 4167,    label: '240' },
-  { us: 16667,   label: '60' },
-  { us: 33333,   label: '30' },
-  { us: 100000,  label: '10' },
-  { us: 1000000, label: '1fps' }
+  { us: 100,        label: '10kfps' },
+  { us: 1000,       label: '1kfps' },
+  { us: 4167,       label: '240' },
+  { us: 16667,      label: '60' },
+  { us: 33333,      label: '30' },
+  { us: 100000,     label: '10' },
+  { us: 1000000,    label: '1fps' },
+  { us: 10000000,   label: '0.1' },
+  { us: 20000000,   label: '0.05' }
 ]
-const LABELED_TICKS = [TICKS[0], TICKS[3], TICKS[4], TICKS[6]]
+const LABELED_TICKS = [TICKS[0], TICKS[3], TICKS[6], TICKS[8]]
 
 // ── Local UI state — seeded from store, but the slider remembers its own
 //   "last manual" values even while auto/unset modes are engaged. ────────
@@ -206,6 +209,7 @@ const expInput = ref(formatExpInput(initExp))
 const fpsInput = ref(usToFps(initFd))
 
 function formatExpInput(us) {
+  if (us >= 1_000_000) return (us / 1000).toFixed(0)
   return (us / 1000).toFixed(us < 10_000 ? 2 : 1)
 }
 
@@ -715,7 +719,7 @@ function onFpsInputKey(e) {
 }
 
 .num-input {
-  width: 48px;
+  width: 56px;
   height: 20px;
   background: var(--bg);
   border: 1px solid var(--line);
