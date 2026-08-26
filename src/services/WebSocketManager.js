@@ -19,6 +19,12 @@ const createLogger = (prefix) => {
 export const ROLE_COMMANDER = 'commander'
 export const ROLE_OBSERVER = 'observer'
 
+// Frame rates can be far below 1 fps (frame_duration up to 20 s), where a
+// single decimal would round every setting to the same 0.1.
+const roundFps = (fps) => fps < 1
+  ? Math.round(fps * 1000) / 1000
+  : Math.round(fps * 10) / 10
+
 export class WebSocketManager extends EventEmitter {
   constructor(serverAddress, serverIndex, options = {}) {
     super()
@@ -639,7 +645,7 @@ export class WebSocketManager extends EventEmitter {
       this.emit('fps-update', {
         serverIndex: this.serverIndex,
         cameraId,
-        clientFps: Math.round(clientFps * 10) / 10
+        clientFps: roundFps(clientFps)
       })
       stats.count = 0
       stats.lastTime = now
@@ -681,7 +687,7 @@ export class WebSocketManager extends EventEmitter {
     const wallElapsed = now - stats.lastWallTime
     if (wallElapsed >= 1000 && stats.durations.length > 0) {
       const avgDuration = stats.durations.reduce((a, b) => a + b, 0) / stats.durations.length
-      const serverFps = Math.round((1000000 / avgDuration) * 10) / 10
+      const serverFps = roundFps(1000000 / avgDuration)
       this.emit('server-fps-update', { serverIndex: this.serverIndex, cameraId, serverFps })
       stats.lastWallTime = now
     }
